@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../db');
+const features = require('../features');
 const {
   checkSuperadminPassword,
   createAdminToken,
@@ -45,6 +46,25 @@ router.get('/me', requireAdmin, (_req, res) => {
 
 router.get('/stats', requireAdmin, (_req, res) => {
   res.json({ stats: db.getDashboardStats() });
+});
+
+router.get('/report', requireAdmin, (_req, res) => {
+  res.json({ report: features.getAdminReport() });
+});
+
+router.get('/moderation', requireAdmin, (_req, res) => {
+  res.json({ products: features.getPendingProducts() });
+});
+
+router.patch('/moderation/:id', requireAdmin, (req, res) => {
+  try {
+    const status = req.body?.status;
+    const product = features.setProductModeration(Number(req.params.id), status);
+    if (!product) return res.status(404).json({ error: 'Mahsulot topilmadi' });
+    res.json({ product });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 router.get('/markets', requireAdmin, (_req, res) => {

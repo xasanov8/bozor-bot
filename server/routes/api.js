@@ -10,6 +10,7 @@ const {
   verifyPassword,
   normalizePhone,
 } = require('../auth');
+const features = require('../features');
 
 const router = express.Router();
 
@@ -168,33 +169,252 @@ router.get('/markets', (_req, res) => {
   res.json({ markets: db.getMarkets() });
 });
 
+router.get('/categories', (_req, res) => {
+  res.json({ categories: features.CATEGORIES });
+});
+
 router.get('/markets/:id', (req, res) => {
   const market = db.getMarketById(Number(req.params.id));
   if (!market || !market.is_active) return res.status(404).json({ error: 'Bozor topilmadi' });
-  const shops = db.getShopsByMarket(market.id);
+  const shops = db.getShopsByMarket(market.id).map(features.enrichShop);
   res.json({ market, shops });
 });
 
 router.get('/markets/:id/search', (req, res) => {
-  const market = db.getMarketById(Number(req.params.id));
-  if (!market || !market.is_active) return res.status(404).json({ error: 'Bozor topilmadi' });
+  const rawId = req.params.id;
+  const allMarkets = rawId === 'all' || req.query.allMarkets === '1' || req.query.allMarkets === 'true';
+  let market = null;
+  if (!allMarkets) {
+    market = db.getMarketById(Number(rawId));
+    if (!market || !market.is_active) return res.status(404).json({ error: 'Bozor topilmadi' });
+  }
   const q = String(req.query.q || '').trim();
-  if (!q) return res.json({ query: q, results: [] });
-  const results = db.searchInMarket(market.id, q);
-  res.json({ query: q, market, results });
+  const filters = {
+    category: req.query.category || 'all',
+    minPrice: req.query.minPrice,
+    maxPrice: req.query.maxPrice,
+    minRating: req.query.minRating,
+    promoOnly: req.query.promoOnly === '1' || req.query.promoOnly === 'true',
+    openNow: req.query.openNow === '1' || req.query.openNow === 'true',
+    sort: req.query.sort || 'relevance',
+    allMarkets,
+  };
+  const results = features.searchInMarketFiltered(allMarkets ? 'all' : market.id, q, filters);
+  res.json({ query: q, market, filters, results, all_markets: allMarkets });
+});
+
+// Global search (barcha bozorlar)
+router.get('/search', (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const filters = {
+    category: req.query.category || 'all',
+    minPrice: req.query.minPrice,
+    maxPrice: req.query.maxPrice,
+    minRating: req.query.minRating,
+    promoOnly: req.query.promoOnly === '1' || req.query.promoOnly === 'true',
+    openNow: req.query.openNow === '1' || req.query.openNow === 'true',
+    sort: req.query.sort || 'relevance',
+    allMarkets: true,
+  };
+  const results = features.searchInMarketFiltered('all', q, filters);
+  res.json({ query: q, filters, results, all_markets: true });
 });
 
 router.get('/shops/:id', (req, res) => {
   const shop = db.getShopById(Number(req.params.id));
   if (!shop || !shop.is_active) return res.status(404).json({ error: "Do'kon topilmadi" });
-  const products = db.getProductsByShop(shop.id);
-  res.json({ shop, products });
+  features.trackEvent(shop.id, 'view_shop');
+  const products = features.getProductsByShopPublic(shop.id);
+  const reviews = features.getReviewsForShop(shop.id, 20);
+  res.json({ shop: features.enrichShop(shop), products, reviews });
 });
 
 router.get('/products/:id', (req, res) => {
   const product = db.getProductById(Number(req.params.id));
   if (!product) return res.status(404).json({ error: 'Mahsulot topilmadi' });
-  res.json({ product });
+  if (product.moderation_status && product.moderation_status !== 'approved' && product.moderation_status !== null) {
+    // egasi o'zi ko'ra olishi uchun keyinroq — public faqat approved
+    if (product.moderation_status !== 'approved') {
+      return res.status(404).json({ error: 'Mahsulot topilmadi' });
+    }
+  }
+  features.trackEvent(product.shop_id || product.shopId, 'view_product', product.id);
+  const reviews = features.getReviewsForProduct(product.id);
+  res.json({ product: features.enrichProduct(product), reviews });
+});
+
+router.post('/events', (req, res) => {
+  try {
+    const { shopId, productId, type } = req.body || {};
+    if (!shopId || !type) return res.status(400).json({ error: 'shopId va type majburiy' });
+    features.trackEvent(Number(shopId), String(type), productId ? Number(productId) : null);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ——— Buyurtma + sharx (xaridor) ———
+
+function getBuyerId(req) {
+  const user = getTelegramUser(req);
+  if (user?.id) return String(user.id);
+  if (req.headers['x-dev-user']) return String(req.headers['x-dev-user']);
+  if (req.body?.buyerTelegramId) return String(req.body.buyerTelegramId);
+  return null;
+}
+
+router.post('/orders', (req, res) => {
+  try {
+    const buyerId = getBuyerId(req);
+    if (!buyerId) return res.status(401).json({ error: 'Xaridor aniqlanmadi' });
+    const { shopId, items, note, buyerName } = req.body || {};
+    if (!shopId || !items?.length) {
+      return res.status(400).json({ error: "Do'kon va mahsulotlar majburiy" });
+    }
+    const order = features.createOrder({
+      buyerTelegramId: buyerId,
+      buyerName: buyerName || getTelegramUser(req)?.first_name || null,
+      shopId: Number(shopId),
+      items,
+      note,
+    });
+    res.status(201).json({ order });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/orders/mine', (req, res) => {
+  const buyerId = getBuyerId(req);
+  if (!buyerId) return res.status(401).json({ error: 'Xaridor aniqlanmadi' });
+  res.json({ orders: features.getOrdersByBuyer(buyerId) });
+});
+
+router.get('/reviews/can/:productId', (req, res) => {
+  const buyerId = getBuyerId(req);
+  if (!buyerId) return res.json({ ok: false, reason: 'Kirish kerak' });
+  res.json(features.canReviewProduct(buyerId, Number(req.params.productId)));
+});
+
+router.post('/reviews', (req, res) => {
+  try {
+    const buyerId = getBuyerId(req);
+    if (!buyerId) return res.status(401).json({ error: 'Xaridor aniqlanmadi' });
+    const { productId, rating, comment } = req.body || {};
+    const review = features.createReview({
+      productId: Number(productId),
+      buyerTelegramId: buyerId,
+      buyerName: getTelegramUser(req)?.first_name || req.body?.buyerName || null,
+      rating,
+      comment,
+    });
+    res.status(201).json({ review });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/products/:id/reviews', (req, res) => {
+  res.json({ reviews: features.getReviewsForProduct(Number(req.params.id)) });
+});
+
+// ——— Chat (xaridor ↔ do'kon egasi) ———
+
+router.get('/chats', (req, res) => {
+  const buyerId = getBuyerId(req);
+  if (!buyerId) return res.status(401).json({ error: 'Xaridor aniqlanmadi' });
+  res.json({ threads: features.getBuyerThreads(buyerId) });
+});
+
+router.get('/chats/thread/:id', (req, res) => {
+  const buyerId = getBuyerId(req);
+  if (!buyerId) return res.status(401).json({ error: 'Xaridor aniqlanmadi' });
+  const thread = features.getThreadById(Number(req.params.id));
+  if (!thread) return res.status(404).json({ error: 'Chat topilmadi' });
+  if (String(thread.buyer_telegram_id) !== String(buyerId)) {
+    return res.status(403).json({ error: "Ruxsat yo'q" });
+  }
+  const messages = features.getThreadMessages(thread.id);
+  res.json({ thread, messages });
+});
+
+router.post('/chats/send', (req, res) => {
+  try {
+    const buyerId = getBuyerId(req);
+    if (!buyerId) return res.status(401).json({ error: 'Xaridor aniqlanmadi' });
+    const { shopId, body } = req.body || {};
+    if (!shopId || !body) return res.status(400).json({ error: "Do'kon va xabar majburiy" });
+    const msg = features.sendChatMessage({
+      shopId: Number(shopId),
+      buyerTelegramId: buyerId,
+      buyerName: getTelegramUser(req)?.first_name || req.body?.buyerName || null,
+      senderRole: 'buyer',
+      senderId: buyerId,
+      body,
+    });
+    const thread = features.getOrCreateThread(
+      Number(shopId),
+      buyerId,
+      getTelegramUser(req)?.first_name || null
+    );
+    res.status(201).json({ message: msg, thread });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/owner/chats', requireOwner, (req, res) => {
+  res.json({
+    threads: features.getOwnerThreads(req.owner?.id, req.identity?.telegramId || req.tgUser?.id),
+  });
+});
+
+router.get('/owner/chats/:id', requireOwner, (req, res) => {
+  const thread = features.getThreadById(Number(req.params.id));
+  if (!thread) return res.status(404).json({ error: 'Chat topilmadi' });
+  const shop = db.getShopById(thread.shop_id);
+  if (!shop || !db.shopOwnedBy(shop, req.identity.telegramId, req.identity.ownerId)) {
+    return res.status(403).json({ error: "Ruxsat yo'q" });
+  }
+  res.json({ thread, messages: features.getThreadMessages(thread.id) });
+});
+
+router.post('/owner/chats/:id/reply', requireOwner, (req, res) => {
+  try {
+    const thread = features.getThreadById(Number(req.params.id));
+    if (!thread) return res.status(404).json({ error: 'Chat topilmadi' });
+    const shop = db.getShopById(thread.shop_id);
+    if (!shop || !db.shopOwnedBy(shop, req.identity.telegramId, req.identity.ownerId)) {
+      return res.status(403).json({ error: "Ruxsat yo'q" });
+    }
+    const msg = features.sendChatMessage({
+      shopId: thread.shop_id,
+      buyerTelegramId: thread.buyer_telegram_id,
+      buyerName: thread.buyer_name,
+      senderRole: 'owner',
+      senderId: req.identity.telegramId || String(req.owner?.id || ''),
+      body: req.body?.body,
+    });
+    res.status(201).json({ message: msg });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/owner/reviews', requireOwner, (req, res) => {
+  res.json({
+    reviews: features.getOwnerReviews(req.owner?.id, req.identity?.telegramId || req.tgUser?.id),
+  });
+});
+
+router.post('/owner/reviews/:id/reply', requireOwner, (req, res) => {
+  try {
+    const review = features.replyToReview(Number(req.params.id), req.identity, req.body?.reply);
+    res.json({ review });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // ——— Owner login (phone + password) — also used by bot backend logic ———
@@ -242,10 +462,12 @@ router.post('/owner/login', (req, res) => {
 router.get('/me', requireOwner, (req, res) => {
   let shops = [];
   if (req.owner) {
-    shops = db.getShopsByOwnerId(req.owner.id);
+    shops = db.getShopsByOwnerId(req.owner.id).map(features.enrichShop);
   } else if (req.tgUser) {
-    shops = db.getShopsByOwnerTelegram(req.tgUser.id);
+    shops = db.getShopsByOwnerTelegram(req.tgUser.id).map(features.enrichShop);
   }
+
+  const stats = features.getOwnerStats(req.owner?.id, req.identity?.telegramId || req.tgUser?.id);
 
   res.json({
     user: req.owner
@@ -257,7 +479,49 @@ router.get('/me', requireOwner, (req, res) => {
           role: 'owner',
         },
     shops,
+    stats,
   });
+});
+
+router.get('/owner/stats', requireOwner, (req, res) => {
+  res.json(features.getOwnerStats(req.owner?.id, req.identity?.telegramId || req.tgUser?.id));
+});
+
+router.get('/owner/shops/:id', requireOwner, (req, res) => {
+  const shop = db.getShopById(Number(req.params.id));
+  if (!shop || !db.shopOwnedBy(shop, req.identity.telegramId, req.identity.ownerId)) {
+    return res.status(404).json({ error: "Do'kon topilmadi yoki ruxsat yo'q" });
+  }
+  const products = features.getAllProductsByShopOwner(shop.id);
+  res.json({ shop: features.enrichShop(shop), products });
+});
+
+router.patch('/shops/:id/hours', requireOwner, (req, res) => {
+  try {
+    const shop = features.updateShopHours(Number(req.params.id), req.identity, {
+      workOpen: req.body.work_open || req.body.workOpen,
+      workClose: req.body.work_close || req.body.workClose,
+      workDays: req.body.work_days || req.body.workDays,
+    });
+    if (!shop) return res.status(404).json({ error: "Do'kon topilmadi yoki ruxsat yo'q" });
+    res.json({ shop });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/products/:id/promo', requireOwner, (req, res) => {
+  try {
+    const product = features.setProductPromo(Number(req.params.id), req.identity, {
+      isPromo: req.body.is_promo ?? req.body.isPromo,
+      discountPercent: req.body.discount_percent ?? req.body.discountPercent,
+      oldPrice: req.body.old_price ?? req.body.oldPrice,
+    });
+    if (!product) return res.status(404).json({ error: "Mahsulot topilmadi yoki ruxsat yo'q" });
+    res.json({ product });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.post('/shops', requireOwner, upload.single('image'), (req, res) => {
@@ -308,7 +572,7 @@ router.patch('/shops/:id', requireOwner, upload.single('image'), (req, res) => {
 
 router.post('/products', requireOwner, upload.single('image'), (req, res) => {
   try {
-    const { shopId, name, description, price, unit } = req.body;
+    const { shopId, name, description, price, unit, category } = req.body;
     if (!shopId || !name || price === undefined || price === '') {
       return res.status(400).json({ error: "Do'kon, nom va narx majburiy" });
     }
@@ -324,8 +588,13 @@ router.post('/products', requireOwner, upload.single('image'), (req, res) => {
       price: Number(price),
       unit: unit || 'dona',
       imageUrl,
+      category: category || 'boshqa',
+      moderationStatus: 'pending', // superadmin tasdiqlaydi
     });
-    res.status(201).json({ product });
+    res.status(201).json({
+      product: features.enrichProduct(product),
+      message: "Mahsulot moderatsiyaga yuborildi. Tasdiqlangach xaridorlarga ko'rinadi.",
+    });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Xatolik' });
   }

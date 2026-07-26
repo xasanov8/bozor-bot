@@ -410,11 +410,20 @@ function getProductById(id) {
   `).get(id);
 }
 
-function createProduct({ shopId, name, description, price, unit, imageUrl }) {
+function createProduct({ shopId, name, description, price, unit, imageUrl, category, moderationStatus }) {
   const result = db.prepare(`
-    INSERT INTO products (shop_id, name, description, price, unit, image_url)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(shopId, name, description || null, price, unit || 'dona', imageUrl || null);
+    INSERT INTO products (shop_id, name, description, price, unit, image_url, category, moderation_status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    shopId,
+    name,
+    description || null,
+    price,
+    unit || 'dona',
+    imageUrl || null,
+    category || 'boshqa',
+    moderationStatus || 'pending'
+  );
   return getProductById(result.lastInsertRowid);
 }
 

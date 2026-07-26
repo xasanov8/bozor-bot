@@ -73,6 +73,8 @@
   async function render() {
     const titles = {
       dashboard: 'Dashboard',
+      report: 'Hisobot',
+      moderation: 'Moderatsiya',
       markets: 'Bozorlar',
       shops: "Do'konlar",
       owners: "Do'kon egalari",
@@ -81,6 +83,8 @@
     panel.innerHTML = '<p class="muted">Yuklanmoqda...</p>';
     try {
       if (tab === 'dashboard') await renderDashboard();
+      else if (tab === 'report') await renderReport();
+      else if (tab === 'moderation') await renderModeration();
       else if (tab === 'markets') await renderMarkets();
       else if (tab === 'shops') await renderShops();
       else if (tab === 'owners') await renderOwners();
@@ -105,6 +109,11 @@
 
   async function renderDashboard() {
     const { stats } = await api('/stats');
+    let pending = 0;
+    try {
+      const mod = await api('/moderation');
+      pending = (mod.products || []).length;
+    } catch (_) {}
     panel.innerHTML = `
       <div class="stats">
         <div class="stat"><strong>${stats.markets}</strong><span>Bozor</span></div>
@@ -113,10 +122,101 @@
         <div class="stat"><strong>${stats.owners}</strong><span>Do'kon egasi</span></div>
       </div>
       <div class="card">
+        <h3>Moderatsiya</h3>
+        <p class="muted">Kutilayotgan mahsulotlar: <strong style="color:var(--warn,#f59e0b)">${pending}</strong></p>
+        <button type="button" class="btn secondary sm mt-8" id="go-mod">Moderatsiyaga o'tish</button>
+      </div>
+      <div class="card">
         <h3>Qisqa qo'llanma</h3>
-        <p class="muted">1. Bozor qo'shing → 2. Do'kon egasi yarating (telefon + parol) → 3. Ixtiyoriy do'kon biriktiring → 4. Egasi botda telefon/parol bilan kiradi.</p>
+        <p class="muted">1. Bozor qo'shing → 2. Do'kon egasi yarating → 3. Mahsulotlar moderatsiyadan o'tadi → 4. Hisobotda buyurtma va reytinglar.</p>
       </div>
     `;
+    $('#go-mod')?.addEventListener('click', () => {
+      tab = 'moderation';
+      document.querySelectorAll('.sidebar .nav').forEach((b) => b.classList.toggle('active', b.dataset.tab === 'moderation'));
+      render();
+    });
+  }
+
+  async function renderReport() {
+    const { report } = await api('/report');
+    const s = report.summary;
+    panel.innerHTML = `
+      <div class="stats" style="grid-template-columns:repeat(3,1fr);">
+        <div class="stat"><strong>${s.markets || 0}</strong><span>Bozor</span></div>
+        <div class="stat"><strong>${s.shops || 0}</strong><span>Do'kon</span></div>
+        <div class="stat"><strong>${s.products || 0}</strong><span>Mahsulot</span></div>
+        <div class="stat"><strong>${s.owners || 0}</strong><span>Egasi</span></div>
+        <div class="stat"><strong>${s.pending_moderation || 0}</strong><span>Kutilayotgan</span></div>
+        <div class="stat"><strong>${s.promo_products || 0}</strong><span>Aksiya</span></div>
+      </div>
+      <div class="card">
+        <h3>Bozorlar bo'yicha</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Bozor</th><th>Do'kon</th><th>Mahsulot</th></tr></thead>
+          <tbody>
+            ${(report.byMarket || []).map((m) => `
+              <tr><td>${esc(m.name)}</td><td>${m.shops}</td><td>${m.products}</td></tr>
+            `).join('')}
+          </tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h3>Top do'konlar (ko'rish bo'yicha)</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Do'kon</th><th>Bozor</th><th>Ko'rish</th></tr></thead>
+          <tbody>
+            ${(report.topShops || []).map((s) => `
+              <tr>
+                <td>${esc(s.name)}</td>
+                <td>${esc(s.market_name)}</td>
+                <td>${s.views_count || 0}</td>
+              </tr>
+            `).join('') || '<tr><td colspan="3">Hali yo‘q</td></tr>'}
+          </tbody>
+        </table></div>
+      </div>
+    `;
+  }
+
+  async function renderModeration() {
+    const { products } = await api('/moderation');
+    panel.innerHTML = `
+      <div class="card">
+        <h3>Kutilayotgan mahsulotlar (${products.length})</h3>
+        <p class="muted" style="margin-bottom:12px;">Yangi mahsulotlar tasdiqlangach xaridorlarga ko'rinadi.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Mahsulot</th><th>Do'kon</th><th>Bozor</th><th>Narx</th><th>Sana</th><th></th></tr></thead>
+          <tbody>
+            ${products.length ? products.map((p) => `
+              <tr>
+                <td><strong>${esc(p.name)}</strong></td>
+                <td>${esc(p.shop_name)}</td>
+                <td>${esc(p.market_name)}</td>
+                <td>${Number(p.price).toLocaleString('uz-UZ')}</td>
+                <td class="muted">${esc((p.created_at || '').slice(0, 16))}</td>
+                <td class="row-actions">
+                  <button type="button" class="btn primary sm" data-approve="${p.id}">Tasdiqlash</button>
+                  <button type="button" class="btn secondary sm" data-reject="${p.id}">Rad etish</button>
+                </td>
+              </tr>
+            `).join('') : '<tr><td colspan="6">Kutilayotgan mahsulot yo‘q</td></tr>'}
+          </tbody>
+        </table></div>
+      </div>
+    `;
+    panel.querySelectorAll('[data-approve]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        await api(`/moderation/${btn.dataset.approve}`, { method: 'PATCH', body: { status: 'approved' } });
+        renderModeration();
+      });
+    });
+    panel.querySelectorAll('[data-reject]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        await api(`/moderation/${btn.dataset.reject}`, { method: 'PATCH', body: { status: 'rejected' } });
+        renderModeration();
+      });
+    });
   }
 
   async function renderMarkets() {

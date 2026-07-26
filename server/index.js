@@ -2,6 +2,7 @@ require('dotenv').config();
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
+require('./features'); // migratsiya: reyting, buyurtma, aksiya, ...
 const api = require('./routes/api');
 const admin = require('./routes/admin');
 const { createBot } = require('./bot');

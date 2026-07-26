@@ -18,7 +18,16 @@
   const pageTitle = $('#page-title');
   const pageSub = $('#page-sub');
   const btnBack = $('#btn-back');
+  const btnOwnerChat = $('#btn-owner-chat');
   const toastEl = $('#toast');
+  let chatPollTimer = null;
+
+  function stopChatPoll() {
+    if (chatPollTimer) {
+      clearInterval(chatPollTimer);
+      chatPollTimer = null;
+    }
+  }
 
   const OWNER_TOKEN_KEY = 'bozor_owner_token';
   const ROLE_KEY = 'bozor_session_role'; // session — har WebApp ochilganda qayta so'raladi
@@ -88,7 +97,16 @@
     };
   }
 
+  function assertBuyerAction() {
+    if (state.role === 'owner') {
+      toast("Do'kon egasi sevimli/savatdan foydalana olmaydi", 'error');
+      return false;
+    }
+    return true;
+  }
+
   function toggleFavorite(p, extra = {}) {
+    if (!assertBuyerAction()) return false;
     const id = Number(p.id);
     if (isFavorite(id)) {
       state.favorites = state.favorites.filter((f) => Number(f.id) !== id);
@@ -103,6 +121,7 @@
   }
 
   function addToCart(p, extra = {}) {
+    if (!assertBuyerAction()) return;
     const id = Number(p.id);
     const existing = state.cart.find((c) => Number(c.id) === id);
     if (existing) {
@@ -206,6 +225,7 @@
     if (!nav) return;
     if (!state.role || state.route?.name === 'role') {
       nav.classList.add('hidden');
+      btnOwnerChat?.classList.add('hidden');
       return;
     }
     nav.classList.remove('hidden');
@@ -217,8 +237,19 @@
       }
       el.classList.toggle('hidden', !roles.includes(state.role));
     });
+    // Do'kon egasi: tepada chat ikonkasi
+    if (btnOwnerChat) {
+      btnOwnerChat.classList.toggle('hidden', state.role !== 'owner' || !state.ownerToken);
+    }
     updateCartBadge();
   }
+
+  btnOwnerChat?.addEventListener('click', () => {
+    haptic('light');
+    if (state.role === 'owner' && state.ownerToken) {
+      navigate('owner-chats', {}, { push: true });
+    }
+  });
 
   function captureOwnerTokenFromUrl() {
     try {
@@ -371,6 +402,7 @@
   let renderSeq = 0;
 
   function navigate(name, params = {}, { push = true } = {}) {
+    stopChatPoll();
     if (push && state.route.name) {
       state.history.push({ ...state.route });
     }
@@ -399,9 +431,17 @@
         if (state.role !== 'buyer') setRole('buyer');
         navigate('search', { marketId: state.selectedMarketId }, { push: false });
       } else if (route === 'favorites') {
+        if (state.role === 'owner') {
+          toast("Sevimli faqat xaridor uchun", 'error');
+          return;
+        }
         if (state.role !== 'buyer') setRole('buyer');
         navigate('favorites', {}, { push: false });
       } else if (route === 'cart') {
+        if (state.role === 'owner') {
+          toast("Savat faqat xaridor uchun", 'error');
+          return;
+        }
         if (state.role !== 'buyer') setRole('buyer');
         navigate('cart', {}, { push: false });
       } else if (route === 'owner') {
@@ -452,6 +492,10 @@
       else if (name === 'product') await renderProduct(params.id);
       else if (name === 'favorites') await renderFavorites();
       else if (name === 'cart') await renderCart();
+      else if (name === 'chat') await renderChat(params.shopId, params.threadId, params.shopName);
+      else if (name === 'chats') await renderChatsList();
+      else if (name === 'owner-chats') await renderOwnerChatsList();
+      else if (name === 'owner-chat') await renderOwnerChat(params.threadId);
       else if (name === 'owner') await renderOwner();
       else if (name === 'owner-create') await renderOwnerCreate();
       else if (name === 'owner-shop') await renderOwnerShop(params.id);
@@ -514,7 +558,7 @@
     });
     $('#role-owner')?.addEventListener('click', () => {
       haptic('medium');
-      // Chiqishdan keyin token bo'lmasa — login formasi chiqadi
+      // Egasi savat/sevimlidan foydalanmasin
       setRole('owner');
       state.history = [];
       navigate('owner', {}, { push: false });
@@ -708,6 +752,40 @@
     });
   }
 
+  function getSearchFiltersFromDom() {
+    return {
+      category: $('#f-category')?.value || 'all',
+      minPrice: $('#f-min')?.value || '',
+      maxPrice: $('#f-max')?.value || '',
+      minRating: $('#f-rating')?.value || '',
+      promoOnly: $('#f-promo')?.checked ? '1' : '',
+      openNow: $('#f-open')?.checked ? '1' : '',
+      sort: $('#f-sort')?.value || 'relevance',
+    };
+  }
+
+  function filtersQuery(f) {
+    const p = new URLSearchParams();
+    Object.entries(f).forEach(([k, v]) => {
+      if (v !== '' && v != null && v !== 'all') p.set(k, v);
+    });
+    return p.toString();
+  }
+
+  function starsHtml(avg, count) {
+    const a = Number(avg) || 0;
+    const full = Math.round(a);
+    return `<span class="stars" title="${a.toFixed(1)}">${'★'.repeat(Math.min(5, full))}${'☆'.repeat(Math.max(0, 5 - full))}</span>${count != null ? `<span class="stars-count">(${count})</span>` : ''}`;
+  }
+
+  function priceHtml(p) {
+    const eff = p.effective_price != null ? p.effective_price : p.price;
+    if (p.has_promo || (p.is_promo && p.discount_percent > 0)) {
+      return `<span class="price-tag">${formatPrice(eff)} <small class="old-price">${formatPrice(p.old_price || p.price)}</small> <span class="promo-chip">-${p.discount_percent || 0}%</span></span>`;
+    }
+    return `<span class="price-tag">${formatPrice(eff)} <small>/${escapeHtml(p.unit || 'dona')}</small></span>`;
+  }
+
   async function renderSearch(marketId, q = '') {
     if (state.role !== 'buyer') {
       return navigate('role', {}, { push: false });
@@ -715,53 +793,97 @@
     setNav('search');
     applyRoleChrome();
     const markets = await loadMarkets();
+    let categories = [];
+    try {
+      const c = await api('/categories');
+      categories = c.categories || [];
+    } catch (_) {
+      categories = [{ id: 'boshqa', label: 'Boshqa' }];
+    }
     const mid = Number(marketId) || state.selectedMarketId || markets[0]?.id;
     state.selectedMarketId = mid;
     const market = markets.find((m) => m.id === mid);
-    setHeader('Qidiruv', market?.name || 'Bozor', true);
+    setHeader('Qidiruv', marketLabel(market?.name) || 'Bozor', true);
 
+    const prefMarket = state.selectedMarketId || mid;
     view.innerHTML = `
       <select class="market-select" id="search-market">
+        <option value="all" selected>Barcha bozorlar</option>
         ${markets.map((m) => `
-          <option value="${m.id}" ${m.id === mid ? 'selected' : ''}>${escapeHtml(marketLabel(m.name))} — ${escapeHtml(m.city || '')}</option>
+          <option value="${m.id}" ${!state.searchAllMarkets && m.id === prefMarket ? 'selected' : ''}>${escapeHtml(marketLabel(m.name))} — ${escapeHtml(m.city || '')}</option>
         `).join('')}
       </select>
       <div class="search-box">
         ${iconSearch()}
-        <input type="search" id="search-q" placeholder="Nima olmoqchisiz?" value="${escapeHtml(q || state.searchQuery)}" autocomplete="off" autofocus />
+        <input type="search" id="search-q" placeholder="Masalan: olma, guruch, non..." value="${escapeHtml(q || state.searchQuery)}" autocomplete="off" autofocus />
+      </div>
+      <div class="filter-panel form-card">
+        <h3 style="margin-bottom:10px;">Filtr</h3>
+        <div class="filter-grid">
+          <div class="field"><label>Kategoriya</label>
+            <select id="f-category">
+              <option value="all">Hammasi</option>
+              ${categories.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.label)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field"><label>Saralash</label>
+            <select id="f-sort">
+              <option value="relevance">Mosligi</option>
+              <option value="price_asc">Arzonroq</option>
+              <option value="price_desc">Qimmatroq</option>
+              <option value="rating">Reyting</option>
+              <option value="promo">Aksiya</option>
+            </select>
+          </div>
+          <div class="field"><label>Min narx</label><input id="f-min" type="number" min="0" placeholder="0" /></div>
+          <div class="field"><label>Max narx</label><input id="f-max" type="number" min="0" placeholder="—" /></div>
+          <div class="field"><label>Min reyting</label>
+            <select id="f-rating">
+              <option value="">Hammasi</option>
+              <option value="4">4+ yulduz</option>
+              <option value="3">3+ yulduz</option>
+            </select>
+          </div>
+        </div>
+        <div class="filter-checks">
+          <label class="check"><input type="checkbox" id="f-promo" /> Faqat aksiya</label>
+          <label class="check"><input type="checkbox" id="f-open" /> Hozir ochiq</label>
+        </div>
+        <button type="button" class="btn btn-primary btn-block mt-8" id="f-apply">Qidirish</button>
       </div>
       <div id="search-results">
-        ${q ? `<div class="loading"><div class="spinner"></div></div>` : `
-          <div class="results-empty">
-            <div class="empty-icon">${iconSearch()}</div>
-            <h4>Mahsulot qidiring</h4>
-            <p>Masalan: olma, guruch, ko'ylak, choy...</p>
-          </div>
-        `}
+        <div class="results-empty">
+          <div class="empty-icon">${iconSearch()}</div>
+          <h4>Qidiruv</h4>
+          <p>«olma», «guruch» deb yozing yoki «Qidirish» bosing</p>
+        </div>
       </div>
     `;
 
-    const input = $('#search-q');
     const marketSelect = $('#search-market');
+    // Bozor sahifasidan kelgan bo'lsa shu bozor, aks holda barcha bozorlar
+    if (marketSelect) {
+      if (marketId) marketSelect.value = String(marketId);
+      else marketSelect.value = 'all';
+    }
+
+    const input = $('#search-q');
     const resultsEl = $('#search-results');
     let debounce;
 
     async function runSearch() {
       const query = input.value.trim();
       state.searchQuery = query;
-      state.selectedMarketId = Number(marketSelect.value);
-      if (!query) {
-        resultsEl.innerHTML = `
-          <div class="results-empty">
-            <div class="empty-icon">${iconSearch()}</div>
-            <h4>Mahsulot qidiring</h4>
-            <p>Yozing va kerakli do'konlar chiqadi</p>
-          </div>`;
-        return;
-      }
+      const marketVal = marketSelect.value;
+      const all = marketVal === 'all';
+      if (!all) state.selectedMarketId = Number(marketVal);
+      const fq = filtersQuery(getSearchFiltersFromDom());
       resultsEl.innerHTML = `<div class="loading"><div class="spinner"></div><span>Qidirilmoqda...</span></div>`;
       try {
-        const data = await api(`/markets/${state.selectedMarketId}/search?q=${encodeURIComponent(query)}`);
+        const path = all
+          ? `/search?q=${encodeURIComponent(query)}${fq ? `&${fq}` : ''}`
+          : `/markets/${marketVal}/search?q=${encodeURIComponent(query)}${fq ? `&${fq}` : ''}`;
+        const data = await api(path);
         renderSearchResults(resultsEl, data);
       } catch (err) {
         resultsEl.innerHTML = `<div class="results-empty"><h4>Xatolik</h4><p>${escapeHtml(err.message)}</p></div>`;
@@ -770,11 +892,15 @@
 
     function onInput() {
       clearTimeout(debounce);
-      debounce = setTimeout(runSearch, 320);
+      debounce = setTimeout(runSearch, 400);
     }
 
     input.addEventListener('input', onInput);
     marketSelect.addEventListener('change', runSearch);
+    $('#f-apply')?.addEventListener('click', runSearch);
+    ['f-category', 'f-sort', 'f-rating', 'f-promo', 'f-open'].forEach((id) => {
+      $(`#${id}`)?.addEventListener('change', runSearch);
+    });
 
     if (q) runSearch();
     else setTimeout(() => input.focus(), 100);
@@ -789,7 +915,7 @@
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>
           </div>
           <h4>Topilmadi</h4>
-          <p>"${escapeHtml(query)}" bo'yicha bu bozorda mahsulot yo'q</p>
+          <p>${query ? `"${escapeHtml(query)}" bo'yicha` : 'Filtr bo\'yicha'} mahsulot yo'q. Boshqa so'z yoki «Barcha bozorlar» ni tanlang.</p>
         </div>`;
       return;
     }
@@ -797,20 +923,24 @@
     const totalProducts = results.reduce((s, r) => s + r.products.length, 0);
     container.innerHTML = `
       <div class="section-head">
-        <h3>Natijalar</h3>
+        <h3>Natijalar ${query ? `— «${escapeHtml(query)}»` : ''}</h3>
         <span>${results.length} do'kon · ${totalProducts} mahsulot</span>
       </div>
       ${results.map((group) => `
         <article class="result-group">
           <div class="result-shop-head">
-            <h4>${escapeHtml(group.shop_name)}</h4>
+            <h4>${escapeHtml(group.shop_name)} ${group.is_open_now ? '<span class="chip accent">Ochiq</span>' : '<span class="chip">Yopiq</span>'}</h4>
+            ${group.market_name ? `<p class="text-muted" style="font-size:0.8rem;margin:4px 0;">${escapeHtml(marketLabel(group.market_name))}</p>` : ''}
+            <div class="contact-row">${starsHtml(group.shop_rating, group.shop_rating_count)}</div>
             <div class="shop-contacts">
               <div class="contact-row">${iconPin()}<span>${escapeHtml(group.shop_address)}</span></div>
-              <div class="contact-row">${iconPhone()}<a href="${phoneLink(group.shop_phone)}">${escapeHtml(group.shop_phone)}</a></div>
+              <div class="contact-row">${iconPhone()}<a href="${phoneLink(group.shop_phone)}" data-call-shop="${group.shop_id}">${escapeHtml(group.shop_phone)}</a></div>
+              ${group.work_open ? `<div class="contact-row text-muted" style="font-size:0.8rem;">${escapeHtml(group.work_open)}–${escapeHtml(group.work_close)}</div>` : ''}
             </div>
             <div class="action-row">
-              <a class="btn btn-primary btn-sm" href="${phoneLink(group.shop_phone)}">Qo'ng'iroq</a>
+              <a class="btn btn-primary btn-sm" href="${phoneLink(group.shop_phone)}" data-call-shop="${group.shop_id}">Qo'ng'iroq</a>
               <button type="button" class="btn btn-secondary btn-sm" data-open-shop="${group.shop_id}">Do'kon</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-chat-shop="${group.shop_id}" data-chat-name="${escapeHtml(group.shop_name)}">Chat</button>
             </div>
           </div>
           <div class="product-list">
@@ -819,14 +949,12 @@
                 <button type="button" class="product-row" data-product="${p.id}">
                   <div class="product-thumb">${productThumb(p)}</div>
                   <div class="product-info">
-                    <h5>${escapeHtml(p.name)}</h5>
-                    <p>${escapeHtml(p.description || p.unit || '')}</p>
+                    <h5>${escapeHtml(p.name)} ${p.has_promo ? '<span class="promo-chip">Aksiya</span>' : ''}</h5>
+                    <p>${escapeHtml(p.description || p.unit || '')} ${starsHtml(p.rating_avg, p.rating_count)}</p>
                   </div>
-                  <div class="price-tag">
-                    ${formatPrice(p.price)}
-                    <small>/${escapeHtml(p.unit || 'dona')}</small>
-                  </div>
+                  <div>${priceHtml(p)}</div>
                 </button>
+                ${state.role !== 'owner' ? `
                 <div class="product-actions" data-meta="${encodeURIComponent(JSON.stringify({
                   shop_id: group.shop_id,
                   shop_name: group.shop_name,
@@ -834,8 +962,8 @@
                   shop_address: group.shop_address,
                 }))}">
                   ${favBtnHtml(p.id)}
-                  <button type="button" class="icon-chip cart" data-add-cart="${p.id}" data-name="${escapeHtml(p.name)}" data-price="${p.price}" data-unit="${escapeHtml(p.unit || 'dona')}" data-img="${escapeHtml(p.image_url || '')}">Savat</button>
-                </div>
+                  <button type="button" class="icon-chip cart" data-add-cart="${p.id}" data-name="${escapeHtml(p.name)}" data-price="${p.effective_price != null ? p.effective_price : p.price}" data-unit="${escapeHtml(p.unit || 'dona')}" data-img="${escapeHtml(p.image_url || '')}">Savat</button>
+                </div>` : ''}
               </div>
             `).join('')}
           </div>
@@ -886,6 +1014,20 @@
         }, meta);
       });
     });
+    container.querySelectorAll('[data-call-shop]').forEach((el) => {
+      el.addEventListener('click', () => {
+        api('/events', { method: 'POST', body: { shopId: Number(el.dataset.callShop), type: 'call' } }).catch(() => {});
+      });
+    });
+    container.querySelectorAll('[data-chat-shop]').forEach((el) => {
+      el.addEventListener('click', () => {
+        if (state.role === 'owner') {
+          toast("Chat faqat xaridor uchun", 'error');
+          return;
+        }
+        navigate('chat', { shopId: Number(el.dataset.chatShop), shopName: el.dataset.chatName });
+      });
+    });
   }
 
   async function renderShop(id) {
@@ -910,7 +1052,10 @@
         </div>
         <div class="action-row">
           <a class="btn btn-primary" href="${phoneLink(shop.phone)}">Qo'ng'iroq qilish</a>
+          ${state.role !== 'owner' ? `<button type="button" class="btn btn-secondary" id="shop-chat">Chat</button>` : ''}
         </div>
+        ${shop.rating_count ? `<div class="mt-8">${starsHtml(shop.rating_avg, shop.rating_count)}</div>` : ''}
+        ${shop.work_open ? `<p class="text-muted mt-8" style="font-size:0.82rem;">Ish vaqti: ${escapeHtml(shop.work_open)}–${escapeHtml(shop.work_close)} · ${shop.is_open_now ? 'Hozir ochiq' : 'Hozir yopiq'}</p>` : ''}
       </div>
       <div class="section-head">
         <h3>Mahsulotlar</h3>
@@ -923,23 +1068,24 @@
               <button type="button" class="product-card" data-product="${p.id}">
                 <div class="ph">${productThumb(p)}</div>
                 <div class="body">
-                  <h5>${escapeHtml(p.name)}</h5>
-                  <div class="price-tag" style="text-align:left;font-size:0.88rem;">
-                    ${formatPrice(p.price)}
-                    <small style="display:inline;margin-left:4px;">/${escapeHtml(p.unit || 'dona')}</small>
-                  </div>
+                  <h5>${escapeHtml(p.name)} ${p.has_promo ? '<span class="promo-chip">Aksiya</span>' : ''}</h5>
+                  <div style="text-align:left;font-size:0.88rem;">${priceHtml(p)}</div>
                 </div>
               </button>
+              ${state.role !== 'owner' ? `
               <div class="card-actions">
                 ${favBtnHtml(p.id)}
-                <button type="button" class="btn btn-primary btn-sm" data-add-cart="${p.id}" data-name="${escapeHtml(p.name)}" data-price="${p.price}" data-unit="${escapeHtml(p.unit || 'dona')}" data-img="${escapeHtml(p.image_url || '')}">Savat</button>
-              </div>
+                <button type="button" class="btn btn-primary btn-sm" data-add-cart="${p.id}" data-name="${escapeHtml(p.name)}" data-price="${p.effective_price != null ? p.effective_price : p.price}" data-unit="${escapeHtml(p.unit || 'dona')}" data-img="${escapeHtml(p.image_url || '')}">Savat</button>
+              </div>` : ''}
             </div>
           `).join('')}
         </div>
       ` : `<div class="results-empty"><p>Mahsulotlar hali qo'shilmagan</p></div>`}
     `;
 
+    $('#shop-chat')?.addEventListener('click', () => {
+      navigate('chat', { shopId: shop.id, shopName: shop.name });
+    });
     view.querySelectorAll('[data-product]').forEach((el) => {
       el.addEventListener('click', () => navigate('product', { id: Number(el.dataset.product) }));
     });
@@ -983,6 +1129,10 @@
       shop_phone: product.shop_phone,
       shop_address: product.shop_address,
     };
+    const cartProduct = {
+      ...product,
+      price: product.effective_price != null ? product.effective_price : product.price,
+    };
 
     view.innerHTML = `
       <div class="sheet">
@@ -992,23 +1142,23 @@
             : `<span>Rasm yo'q</span>`}
         </div>
         <div class="sheet-body">
-          <h2>${escapeHtml(product.name)}</h2>
-          <div class="price-tag" style="font-size:1.25rem;text-align:left;margin:8px 0 12px;">
-            ${formatPrice(product.price)}
-            <small style="display:inline;margin-left:6px;">/ ${escapeHtml(product.unit || 'dona')}</small>
-          </div>
+          <h2>${escapeHtml(product.name)} ${product.has_promo ? '<span class="promo-chip">Aksiya</span>' : ''}</h2>
+          <div style="font-size:1.25rem;text-align:left;margin:8px 0 12px;">${priceHtml(product)}</div>
           ${product.description ? `<p class="text-secondary mb-16">${escapeHtml(product.description)}</p>` : ''}
           <div class="form-card" style="margin:0;padding:12px;">
             <h3 style="font-size:0.95rem;margin-bottom:10px;">${escapeHtml(product.shop_name)}</h3>
             <div class="shop-contacts">
               <div class="contact-row">${iconPin()}<span>${escapeHtml(product.shop_address)}</span></div>
-              <div class="contact-row">${iconPhone()}<a href="${phoneLink(product.shop_phone)}">${escapeHtml(product.shop_phone)}</a></div>
+              <div class="contact-row">${iconPhone()}<a href="${phoneLink(product.shop_phone)}" id="call-product">${escapeHtml(product.shop_phone)}</a></div>
             </div>
           </div>
           <div class="action-row mt-16">
+            ${state.role !== 'owner' ? `
             <button type="button" class="btn btn-primary btn-block" id="add-cart">Savatga qo'shish</button>
             <button type="button" class="btn btn-secondary btn-block" id="toggle-fav">${isFavorite(product.id) ? 'Sevimlidan olib tashlash' : "Sevimlilarga qo'shish"}</button>
-            <a class="btn btn-ghost btn-block" href="${phoneLink(product.shop_phone)}">Do'konga qo'ng'iroq</a>
+            <button type="button" class="btn btn-ghost btn-block" id="open-chat">Do'kon bilan chat</button>
+            ` : ''}
+            <a class="btn btn-ghost btn-block" href="${phoneLink(product.shop_phone)}" id="call-product-2">Do'konga qo'ng'iroq</a>
             <button type="button" class="btn btn-secondary btn-block" id="goto-shop">Do'kon sahifasi</button>
           </div>
         </div>
@@ -1016,14 +1166,26 @@
     `;
 
     $('#goto-shop').addEventListener('click', () => navigate('shop', { id: product.shop_id }));
-    $('#add-cart').addEventListener('click', () => addToCart(product, meta));
-    $('#toggle-fav').addEventListener('click', () => {
-      const on = toggleFavorite(product, meta);
+    $('#add-cart')?.addEventListener('click', () => addToCart(cartProduct, meta));
+    $('#toggle-fav')?.addEventListener('click', () => {
+      const on = toggleFavorite(cartProduct, meta);
       $('#toggle-fav').textContent = on ? 'Sevimlidan olib tashlash' : "Sevimlilarga qo'shish";
     });
+    $('#open-chat')?.addEventListener('click', () => {
+      navigate('chat', { shopId: product.shop_id, shopName: product.shop_name });
+    });
+    const trackCall = () => {
+      api('/events', { method: 'POST', body: { shopId: product.shop_id, productId: product.id, type: 'call' } }).catch(() => {});
+    };
+    $('#call-product')?.addEventListener('click', trackCall);
+    $('#call-product-2')?.addEventListener('click', trackCall);
   }
 
   async function renderFavorites() {
+    if (state.role === 'owner') {
+      toast("Do'kon egasi sevimlidan foydalana olmaydi", 'error');
+      return navigate('owner', {}, { push: false });
+    }
     if (state.role !== 'buyer') return navigate('role', {}, { push: false });
     setNav('favorites');
     // Ochilganda serverdan yangilash
@@ -1079,6 +1241,10 @@
   }
 
   async function renderCart() {
+    if (state.role === 'owner') {
+      toast("Do'kon egasi savatdan foydalana olmaydi", 'error');
+      return navigate('owner', {}, { push: false });
+    }
     if (state.role !== 'buyer') return navigate('role', {}, { push: false });
     setNav('cart');
     // Ochilganda serverdan yangilash
@@ -1124,7 +1290,7 @@
           <h3>Jami</h3>
           <span class="price-tag" style="font-size:1.1rem;">${formatPrice(total)}</span>
         </div>
-        <p class="text-muted mt-8" style="font-size:0.82rem;">Buyurtma uchun do'konga qo'ng'iroq qiling — savat eslatma sifatida.</p>
+        <p class="text-muted mt-8" style="font-size:0.82rem;">Savat eslatma. Kerakli do'konga qo'ng'iroq qiling yoki chat yozing — buyurtma tizimi yo'q.</p>
         <button type="button" class="btn btn-ghost btn-block mt-12" id="clear-cart">Savatni tozalash</button>
       </div>
     `;
@@ -1187,11 +1353,18 @@
 
     const shops = me.shops || [];
     const displayName = me.user.name || me.user.first_name || 'Salom';
+    const t = me.stats?.totals || {};
     view.innerHTML = `
       <section class="hero" style="padding:16px;">
         <div class="hero-kicker">Do'kon egasi</div>
         <h2 style="font-size:1.2rem;">${escapeHtml(displayName)}</h2>
-        <p>Mahsulotlar (rasm + narx) kiriting. Xaridorlar qidiruvda sizni topadi.${me.user.phone ? ` · ${escapeHtml(me.user.phone)}` : ''}</p>
+        <p>Mahsulotlar moderatsiyadan o'tgach ko'rinadi.${me.user.phone ? ` · ${escapeHtml(me.user.phone)}` : ''}</p>
+        <div class="stats-row">
+          <div class="stat"><strong>${t.views || 0}</strong><span>Ko'rish</span></div>
+          <div class="stat"><strong>${t.product_views || 0}</strong><span>Mahsulot ko'rish</span></div>
+          <div class="stat"><strong>${t.products || 0}</strong><span>Mahsulot</span></div>
+          <div class="stat"><strong>${t.calls || 0}</strong><span>Qo'ng'iroq</span></div>
+        </div>
       </section>
 
       <div class="section-head">
@@ -1200,11 +1373,18 @@
       </div>
       ${shops.length ? shops.map((s) => `
         <div class="owner-shop">
-          <h4>${escapeHtml(s.name)}</h4>
+          <h4>${escapeHtml(s.name)} ${s.is_open_now ? '<span class="chip accent">Ochiq</span>' : '<span class="chip">Yopiq</span>'}</h4>
           <p>${escapeHtml(s.market_name)} · ${escapeHtml(s.address)} · ${escapeHtml(s.phone)}</p>
+          <p class="text-muted" style="font-size:0.82rem;margin-bottom:8px;">Ish vaqti: ${escapeHtml(s.work_open || '09:00')}–${escapeHtml(s.work_close || '18:00')} · ${starsHtml(s.rating_avg, s.rating_count)}</p>
           <div class="owner-actions">
             <button type="button" class="btn btn-primary btn-sm" data-manage="${s.id}">Mahsulotlar</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-hours="${s.id}">Ish vaqti</button>
             <button type="button" class="btn btn-secondary btn-sm" data-view="${s.id}">Ko'rish</button>
+          </div>
+          <div class="form-card mt-12 hidden" id="hours-${s.id}">
+            <div class="field"><label>Ochilish</label><input type="time" id="open-${s.id}" value="${escapeHtml((s.work_open || '09:00').slice(0, 5))}" /></div>
+            <div class="field"><label>Yopilish</label><input type="time" id="close-${s.id}" value="${escapeHtml((s.work_close || '18:00').slice(0, 5))}" /></div>
+            <button type="button" class="btn btn-primary btn-sm" data-save-hours="${s.id}">Saqlash</button>
           </div>
         </div>
       `).join('') : `
@@ -1213,6 +1393,7 @@
           <p>Superadmin sizga do'kon biriktirishi kerak.</p>
         </div>
       `}
+      <p class="text-muted text-center mt-12" style="font-size:0.85rem;">Chatlar — yuqoridagi chat ikonkasi orqali</p>
       <button type="button" class="btn btn-ghost btn-block mt-16" id="owner-logout">Chiqish</button>
     `;
 
@@ -1227,6 +1408,29 @@
     });
     view.querySelectorAll('[data-view]').forEach((el) => {
       el.addEventListener('click', () => navigate('shop', { id: Number(el.dataset.view) }));
+    });
+    view.querySelectorAll('[data-hours]').forEach((el) => {
+      el.addEventListener('click', () => {
+        $(`#hours-${el.dataset.hours}`)?.classList.toggle('hidden');
+      });
+    });
+    view.querySelectorAll('[data-save-hours]').forEach((el) => {
+      el.addEventListener('click', async () => {
+        const id = el.dataset.saveHours;
+        try {
+          await api(`/shops/${id}/hours`, {
+            method: 'PATCH',
+            body: {
+              work_open: $(`#open-${id}`).value,
+              work_close: $(`#close-${id}`).value,
+            },
+          });
+          toast('Ish vaqti saqlandi', 'success');
+          navigate('owner', {}, { push: false });
+        } catch (ex) {
+          toast(ex.message, 'error');
+        }
+      });
     });
   }
 
@@ -1314,13 +1518,20 @@
       return navigate('owner', {}, { push: false });
     }
     setNav('owner');
-    const data = await api(`/shops/${shopId}`);
+    const data = await api(`/owner/shops/${shopId}`);
     const { shop, products } = data;
     setHeader(shop.name, 'Mahsulotlar boshqaruvi', true);
+
+    const statusLabel = (st) => {
+      if (st === 'pending') return '<span class="chip">Kutilmoqda</span>';
+      if (st === 'rejected') return '<span class="chip" style="color:#fca5a5;">Rad etilgan</span>';
+      return '<span class="chip accent">Tasdiqlangan</span>';
+    };
 
     view.innerHTML = `
       <div class="detail-hero" style="padding:14px;">
         <p class="muted" style="margin:0;">${escapeHtml(shop.address)} · ${escapeHtml(shop.phone)}</p>
+        <p class="text-muted mt-8" style="font-size:0.82rem;">Yangi mahsulot superadmin tasdiqlagach chiqadi.</p>
       </div>
       <button type="button" class="btn btn-primary btn-block mb-16" id="btn-add-product">+ Mahsulot qo'shish</button>
       <div class="section-head">
@@ -1330,14 +1541,18 @@
       ${products.length ? `
         <div class="stack">
           ${products.map((p) => `
-            <div class="owner-shop" style="display:grid;grid-template-columns:56px 1fr;gap:12px;align-items:center;">
-              <div class="product-thumb" style="width:56px;height:56px;">${productThumb(p)}</div>
-              <div>
-                <h4 style="margin-bottom:2px;">${escapeHtml(p.name)}</h4>
-                <p style="margin-bottom:8px;">${formatPrice(p.price)} / ${escapeHtml(p.unit)}</p>
-                <div class="owner-actions">
-                  <button type="button" class="btn btn-secondary btn-sm" data-edit="${p.id}">Tahrir</button>
-                  <button type="button" class="btn btn-danger btn-sm" data-del="${p.id}">O'chirish</button>
+            <div class="owner-shop">
+              <div style="display:grid;grid-template-columns:56px 1fr;gap:12px;align-items:center;">
+                <div class="product-thumb" style="width:56px;height:56px;">${productThumb(p)}</div>
+                <div>
+                  <h4 style="margin-bottom:2px;">${escapeHtml(p.name)} ${statusLabel(p.moderation_status)}</h4>
+                  <p style="margin-bottom:6px;">${formatPrice(p.effective_price != null ? p.effective_price : p.price)} / ${escapeHtml(p.unit)}
+                    ${p.is_promo ? `<span class="promo-chip">-${p.discount_percent || 0}%</span>` : ''}</p>
+                  <div class="owner-actions">
+                    <button type="button" class="btn btn-secondary btn-sm" data-edit="${p.id}">Tahrir</button>
+                    <button type="button" class="btn btn-primary btn-sm" data-promo="${p.id}" data-disc="${p.discount_percent || 10}" data-on="${p.is_promo ? 1 : 0}">Aksiya</button>
+                    <button type="button" class="btn btn-danger btn-sm" data-del="${p.id}">O'chirish</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1353,6 +1568,28 @@
     view.querySelectorAll('[data-edit]').forEach((el) => {
       el.addEventListener('click', () => {
         navigate('owner-product', { shopId, productId: Number(el.dataset.edit) });
+      });
+    });
+
+    view.querySelectorAll('[data-promo]').forEach((el) => {
+      el.addEventListener('click', async () => {
+        const on = el.dataset.on === '1';
+        let disc = 10;
+        if (!on) {
+          const v = prompt('Chegirma foizi (%)', el.dataset.disc || '10');
+          if (v == null) return;
+          disc = Number(v) || 10;
+        }
+        try {
+          await api(`/products/${el.dataset.promo}/promo`, {
+            method: 'PATCH',
+            body: { is_promo: !on, discount_percent: disc },
+          });
+          toast(on ? 'Aksiya o‘chirildi' : `Aksiya: -${disc}%`, 'success');
+          renderOwnerShop(shopId);
+        } catch (err) {
+          toast(err.message, 'error');
+        }
       });
     });
 
@@ -1463,6 +1700,282 @@
         btn.textContent = 'Saqlash';
       }
     });
+  }
+
+  // ——— Chat (xaridor) ———
+
+  async function renderChatsList() {
+    if (state.role !== 'buyer') return navigate('role', {}, { push: false });
+    setNav('home');
+    setHeader('Chatlar', "Do'konlar bilan yozishma", true);
+    applyRoleChrome();
+    let threads = [];
+    try {
+      const data = await api('/chats');
+      threads = data.threads || [];
+    } catch (err) {
+      view.innerHTML = `<div class="results-empty"><p>${escapeHtml(err.message)}</p></div>`;
+      return;
+    }
+    view.innerHTML = threads.length ? `
+      <div class="stack">
+        ${threads.map((t) => `
+          <button type="button" class="owner-shop" style="width:100%;text-align:left;" data-thread="${t.id}" data-shop="${t.shop_id}">
+            <h4>${escapeHtml(t.shop_name)}</h4>
+            <p class="text-muted">${escapeHtml(t.market_name || '')}</p>
+            <p style="margin-top:6px;">${escapeHtml(t.last_message || '')}</p>
+            <p class="text-muted" style="font-size:0.75rem;">${escapeHtml((t.last_at || '').slice(0, 16))}</p>
+          </button>
+        `).join('')}
+      </div>
+    ` : `<div class="results-empty"><h4>Chat yo'q</h4><p>Do'kon sahifasidan «Chat» bosing</p></div>`;
+    view.querySelectorAll('[data-thread]').forEach((el) => {
+      el.addEventListener('click', () => {
+        navigate('chat', { threadId: Number(el.dataset.thread), shopId: Number(el.dataset.shop) });
+      });
+    });
+  }
+
+  async function renderChat(shopId, threadId, shopName) {
+    if (state.role === 'owner') {
+      toast("Chat — yuqoridagi chat ikonkasi orqali", 'error');
+      return navigate('owner-chats', {}, { push: false });
+    }
+    setHeader(shopName || 'Chat', "Do'kon bilan yozishma", true);
+    applyRoleChrome();
+    view.innerHTML = `<div class="loading"><div class="spinner"></div></div>`;
+
+    let thread = null;
+    let messages = [];
+    let lastMsgId = 0;
+
+    try {
+      if (threadId) {
+        const data = await api(`/chats/thread/${threadId}`);
+        thread = data.thread;
+        messages = data.messages || [];
+      } else if (shopId) {
+        const list = await api('/chats');
+        thread = (list.threads || []).find((t) => Number(t.shop_id) === Number(shopId)) || null;
+        if (thread) {
+          const data = await api(`/chats/thread/${thread.id}`);
+          messages = data.messages || [];
+          thread = data.thread;
+        }
+      }
+    } catch (_) { /* yangi chat */ }
+
+    lastMsgId = messages.length ? messages[messages.length - 1].id : 0;
+    setHeader(thread?.shop_name || shopName || "Do'kon", 'Chat (jonli)', true);
+
+    function paint(keepInput = false) {
+      const draft = keepInput ? ($('#chat-input')?.value || '') : '';
+      const nearBottom = (() => {
+        const box = $('#chat-messages');
+        if (!box) return true;
+        return box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+      })();
+      view.innerHTML = `
+        <div class="chat-box">
+          <div class="chat-messages" id="chat-messages">
+            ${messages.length ? messages.map((m) => `
+              <div class="chat-bubble ${m.sender_role === 'buyer' ? 'me' : 'them'}" data-mid="${m.id}">
+                <div class="chat-meta">${m.sender_role === 'buyer' ? 'Siz' : "Do'kon"}</div>
+                <div>${escapeHtml(m.body)}</div>
+                <div class="chat-time">${escapeHtml((m.created_at || '').slice(11, 16))}</div>
+              </div>
+            `).join('') : '<p class="text-muted text-center">Xabar yozing — do\'kon egasi darhol ko\'radi</p>'}
+          </div>
+          <div class="chat-input-row">
+            <input type="text" id="chat-input" placeholder="Xabar..." maxlength="1000" value="${escapeHtml(draft)}" />
+            <button type="button" class="btn btn-primary" id="chat-send">Yuborish</button>
+          </div>
+        </div>
+      `;
+      const box = $('#chat-messages');
+      if (box && nearBottom) box.scrollTop = box.scrollHeight;
+      $('#chat-send')?.addEventListener('click', send);
+      $('#chat-input')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') send();
+      });
+      if (keepInput && draft) {
+        const inp = $('#chat-input');
+        if (inp) {
+          inp.focus();
+          inp.selectionStart = inp.selectionEnd = inp.value.length;
+        }
+      }
+    }
+
+    async function send() {
+      const input = $('#chat-input');
+      const body = (input?.value || '').trim();
+      if (!body) return;
+      const sid = shopId || thread?.shop_id;
+      if (!sid) {
+        toast("Do'kon topilmadi", 'error');
+        return;
+      }
+      try {
+        const data = await api('/chats/send', {
+          method: 'POST',
+          body: { shopId: Number(sid), body },
+        });
+        if (data.thread) thread = data.thread;
+        const refreshed = await api(`/chats/thread/${thread.id}`);
+        messages = refreshed.messages || [];
+        thread = refreshed.thread;
+        lastMsgId = messages.length ? messages[messages.length - 1].id : lastMsgId;
+        paint(false);
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function poll() {
+      if (!thread?.id) return;
+      if (document.hidden) return;
+      try {
+        const data = await api(`/chats/thread/${thread.id}`);
+        const next = data.messages || [];
+        const maxId = next.length ? next[next.length - 1].id : 0;
+        if (maxId !== lastMsgId || next.length !== messages.length) {
+          messages = next;
+          thread = data.thread;
+          lastMsgId = maxId;
+          paint(true);
+        }
+      } catch (_) { /* ignore */ }
+    }
+
+    stopChatPoll();
+    paint();
+    chatPollTimer = setInterval(poll, 2000);
+  }
+
+  async function renderOwnerReviews() {
+    // Sharxlar olib tashlandi
+    navigate('owner', {}, { push: false });
+  }
+
+  async function renderOwnerChatsList() {
+    if (!state.ownerToken) return navigate('owner', {}, { push: false });
+    setNav('owner');
+    setHeader('Chatlar', 'Xaridorlar', true);
+    applyRoleChrome();
+    let threads = [];
+    try {
+      const data = await api('/owner/chats');
+      threads = data.threads || [];
+    } catch (err) {
+      view.innerHTML = `<div class="results-empty"><p>${escapeHtml(err.message)}</p></div>`;
+      return;
+    }
+    view.innerHTML = threads.length ? `
+      <div class="stack">
+        ${threads.map((t) => `
+          <button type="button" class="owner-shop" style="width:100%;text-align:left;" data-othread="${t.id}">
+            <h4>${escapeHtml(t.buyer_name || 'Xaridor')} · ${escapeHtml(t.shop_name)}</h4>
+            <p>${escapeHtml(t.last_message || '')}</p>
+            <p class="text-muted" style="font-size:0.75rem;">${escapeHtml((t.last_at || '').slice(0, 16))}</p>
+          </button>
+        `).join('')}
+      </div>
+    ` : `<div class="results-empty"><h4>Chat yo'q</h4><p>Xaridorlar do'konga chat yozganda shu yerda chiqadi</p></div>`;
+    view.querySelectorAll('[data-othread]').forEach((el) => {
+      el.addEventListener('click', () => navigate('owner-chat', { threadId: Number(el.dataset.othread) }));
+    });
+  }
+
+  async function renderOwnerChat(threadId) {
+    if (!state.ownerToken) return navigate('owner', {}, { push: false });
+    setNav('owner');
+    setHeader('Chat', 'Jonli yozishma', true);
+    applyRoleChrome();
+    let thread;
+    let messages = [];
+    let lastMsgId = 0;
+    try {
+      const data = await api(`/owner/chats/${threadId}`);
+      thread = data.thread;
+      messages = data.messages || [];
+    } catch (err) {
+      view.innerHTML = `<div class="results-empty"><p>${escapeHtml(err.message)}</p></div>`;
+      return;
+    }
+    lastMsgId = messages.length ? messages[messages.length - 1].id : 0;
+    setHeader(thread.buyer_name || 'Xaridor', thread.shop_name, true);
+
+    function paint(keepInput = false) {
+      const draft = keepInput ? ($('#ochat-input')?.value || '') : '';
+      const nearBottom = (() => {
+        const box = $('#ochat-messages');
+        if (!box) return true;
+        return box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+      })();
+      view.innerHTML = `
+        <div class="chat-box">
+          <div class="chat-messages" id="ochat-messages">
+            ${messages.map((m) => `
+              <div class="chat-bubble ${m.sender_role === 'owner' ? 'me' : 'them'}">
+                <div class="chat-meta">${m.sender_role === 'owner' ? 'Siz' : 'Xaridor'}</div>
+                <div>${escapeHtml(m.body)}</div>
+                <div class="chat-time">${escapeHtml((m.created_at || '').slice(11, 16))}</div>
+              </div>
+            `).join('')}
+          </div>
+          <div class="chat-input-row">
+            <input type="text" id="ochat-input" placeholder="Javob..." maxlength="1000" value="${escapeHtml(draft)}" />
+            <button type="button" class="btn btn-primary" id="ochat-send">Yuborish</button>
+          </div>
+        </div>
+      `;
+      const box = $('#ochat-messages');
+      if (box && nearBottom) box.scrollTop = box.scrollHeight;
+      $('#ochat-send')?.addEventListener('click', send);
+      $('#ochat-input')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') send();
+      });
+      if (keepInput && draft) {
+        const inp = $('#ochat-input');
+        if (inp) {
+          inp.focus();
+          inp.selectionStart = inp.selectionEnd = inp.value.length;
+        }
+      }
+    }
+
+    async function send() {
+      const body = ($('#ochat-input')?.value || '').trim();
+      if (!body) return;
+      try {
+        await api(`/owner/chats/${threadId}/reply`, { method: 'POST', body: { body } });
+        const data = await api(`/owner/chats/${threadId}`);
+        messages = data.messages || [];
+        lastMsgId = messages.length ? messages[messages.length - 1].id : lastMsgId;
+        paint(false);
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function poll() {
+      if (document.hidden) return;
+      try {
+        const data = await api(`/owner/chats/${threadId}`);
+        const next = data.messages || [];
+        const maxId = next.length ? next[next.length - 1].id : 0;
+        if (maxId !== lastMsgId || next.length !== messages.length) {
+          messages = next;
+          lastMsgId = maxId;
+          paint(true);
+        }
+      } catch (_) { /* ignore */ }
+    }
+
+    stopChatPoll();
+    paint();
+    chatPollTimer = setInterval(poll, 2000);
   }
 
   // ——— Live updates (F5 shart emas) ———
