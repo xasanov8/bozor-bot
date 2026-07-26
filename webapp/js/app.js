@@ -228,7 +228,7 @@
     if (!nav) return;
     if (!state.role || state.route?.name === 'role') {
       nav.classList.add('hidden');
-      btnOwnerChat?.classList.add('hidden');
+      btnChatTop?.classList.add('hidden');
       return;
     }
     nav.classList.remove('hidden');

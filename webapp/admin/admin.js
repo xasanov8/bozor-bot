@@ -372,56 +372,72 @@
     });
   }
 
-  async function renderShops() {
-    const { shops } = await api('/shops');
-    panel.innerHTML = `
-      <div class="card">
-        <h3>Barcha do'konlar</h3>
-        <p class="muted" style="margin-bottom:12px;">«Tafsilot» da do'kon ma'lumotlari, egasi login/paroli va mahsulotlar chiqadi.</p>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Do'kon</th>
-                <th>Bozor</th>
-                <th>Telefon</th>
-                <th>Egasi / Login</th>
-                <th>Parol</th>
-                <th>Mahsulot</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${shops.map((s) => `
-                <tr>
-                  <td><strong>${esc(s.name)}</strong><div class="muted">${esc(s.address)}</div></td>
-                  <td>${esc(s.market_name)}</td>
-                  <td>${esc(s.phone)}</td>
-                  <td>${esc(s.owner_name || '—')}<div class="muted">${esc(s.owner_login_phone || '')}</div></td>
-                  <td>
-                    ${s.owner_password
-                      ? `<span class="pwd-wrap">
-                          <code class="pwd-value" data-pwd="${esc(s.owner_password)}">••••••••</code>
-                          <button type="button" class="btn secondary sm btn-toggle-pwd">Ko'rish</button>
-                        </span>`
-                      : '<span class="muted">—</span>'}
-                  </td>
-                  <td>${s.products_count || 0}</td>
-                  <td><button type="button" class="btn secondary sm" data-shop="${s.id}">Tafsilot</button></td>
-                </tr>
-              `).join('') || '<tr><td colspan="7">Do‘kon yo‘q</td></tr>'}
-            </tbody>
-          </table>
-        </div>
-        <div id="shop-detail"></div>
-      </div>
-    `;
+  function shopRowHtml(s) {
+    return `
+      <tr data-row="1"
+          data-market-id="${s.market_id || ''}"
+          data-phone="${esc(String(s.phone || '').toLowerCase())}"
+          data-login="${esc(String(s.owner_login_phone || '').toLowerCase())}"
+          data-name="${esc(String(s.name || '').toLowerCase())}">
+        <td><strong>${esc(s.name)}</strong><div class="muted">${esc(s.address)}</div></td>
+        <td>${esc(s.market_name)}</td>
+        <td><code>${esc(s.phone)}</code></td>
+        <td>${esc(s.owner_name || '—')}<div class="muted">${esc(s.owner_login_phone || '')}</div></td>
+        <td>
+          ${s.owner_password
+            ? `<span class="pwd-wrap">
+                <code class="pwd-value" data-pwd="${esc(s.owner_password)}">••••••••</code>
+                <button type="button" class="btn secondary sm btn-toggle-pwd">Ko'rish</button>
+              </span>`
+            : '<span class="muted">—</span>'}
+        </td>
+        <td>${s.products_count || 0}</td>
+        <td><button type="button" class="btn secondary sm" data-shop="${s.id}">Tafsilot</button></td>
+      </tr>`;
+  }
 
-    bindPwdToggles(panel);
+  function bindShopTable(root, allShops) {
+    const marketSel = root.querySelector('#shop-market-filter');
+    const phoneInput = root.querySelector('#shop-phone-filter');
+    const tbody = root.querySelector('#shops-tbody');
+    const countEl = root.querySelector('#shops-count');
+    const emptyEl = root.querySelector('#shops-empty');
 
-    panel.querySelectorAll('[data-shop]').forEach((btn) => {
+    function applyFilter() {
+      const marketId = marketSel?.value || '';
+      const phoneQ = (phoneInput?.value || '').replace(/\s+/g, '').toLowerCase();
+      let shown = 0;
+      tbody.querySelectorAll('tr[data-row]').forEach((tr) => {
+        const mid = String(tr.dataset.marketId || '');
+        const phone = String(tr.dataset.phone || '');
+        const login = String(tr.dataset.login || '');
+        const name = String(tr.dataset.name || '');
+        let ok = true;
+        if (marketId && mid !== marketId) ok = false;
+        if (ok && phoneQ) {
+          ok = phone.includes(phoneQ) || login.includes(phoneQ) || name.includes(phoneQ);
+        }
+        tr.style.display = ok ? '' : 'none';
+        if (ok) shown += 1;
+      });
+      if (countEl) {
+        const marketName = marketId
+          ? (marketSel.options[marketSel.selectedIndex]?.text || 'Bozor')
+          : 'Barcha bozorlar';
+        countEl.textContent = `${marketName}: ${shown} ta do'kon`;
+      }
+      if (emptyEl) emptyEl.hidden = shown > 0;
+    }
+
+    marketSel?.addEventListener('change', applyFilter);
+    phoneInput?.addEventListener('input', applyFilter);
+    applyFilter();
+
+    bindPwdToggles(root);
+    root.querySelectorAll('[data-shop]').forEach((btn) => {
       btn.addEventListener('click', async () => {
-        const box = $('#shop-detail');
+        const box = root.querySelector('#shop-detail');
+        if (!box) return;
         box.innerHTML = '<p class="muted">Yuklanmoqda...</p>';
         try {
           const { shop, products } = await api(`/shops/${btn.dataset.shop}`);
@@ -435,9 +451,68 @@
     });
   }
 
-  async function renderOwners() {
-    const [{ owners }, { markets }] = await Promise.all([api('/owners'), api('/markets')]);
+  function shopsBrowserHtml(shops, markets, title) {
+    return `
+      <div class="card">
+        <h3>${esc(title)}</h3>
+        <p class="muted" style="margin-bottom:12px;">
+          Avval <strong>bozorni tanlang</strong> — shu bozorning barcha do'konlari chiqadi.
+          Keyin ixtiyoriy <strong>telefon</strong> yozib aniq do'konni toping.
+        </p>
+        <div class="filter-bar">
+          <div class="field" style="margin:0;">
+            <label>Bozor *</label>
+            <select id="shop-market-filter">
+              <option value="">— Barcha bozorlar —</option>
+              ${markets.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field" style="margin:0;">
+            <label>Telefon qidiruv</label>
+            <input id="shop-phone-filter" type="search" placeholder="+99890... yoki do'kon nomi" />
+          </div>
+        </div>
+        <p class="muted" id="shops-count" style="margin:10px 0 8px;"></p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Do'kon</th>
+                <th>Bozor</th>
+                <th>Telefon</th>
+                <th>Egasi / Login</th>
+                <th>Parol</th>
+                <th>Mahsulot</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="shops-tbody">
+              ${shops.map(shopRowHtml).join('') || ''}
+            </tbody>
+          </table>
+        </div>
+        <p class="muted" id="shops-empty" hidden style="margin-top:12px;">Bu bozor/telefon bo'yicha do'kon topilmadi.</p>
+        <div id="shop-detail"></div>
+      </div>
+    `;
+  }
+
+  async function renderShops() {
+    const [{ shops }, { markets }] = await Promise.all([api('/shops'), api('/markets')]);
     marketsCache = markets;
+    panel.innerHTML = shopsBrowserHtml(shops, markets, "Do'konlar");
+    bindShopTable(panel, shops);
+  }
+
+  async function renderOwners() {
+    const [{ owners }, { markets }, shopsRes] = await Promise.all([
+      api('/owners'),
+      api('/markets'),
+      api('/shops'),
+    ]);
+    marketsCache = markets;
+    const shops = shopsRes.shops || [];
+
     panel.innerHTML = `
       <div class="card">
         <h3>Yangi do'kon egasi</h3>
@@ -467,10 +542,17 @@
           <p class="error" id="owner-err" hidden></p>
         </form>
       </div>
+
+      ${shopsBrowserHtml(shops, markets, "Do'konlar (bozor bo'yicha)")}
+
       <div class="card">
-        <h3>Ro'yxat</h3>
+        <h3>Do'kon egalari ro'yxati</h3>
         <p class="muted" style="margin-bottom:12px;">Parollar faqat superadminga ko‘rinadi. Eski yozuvlarda parol bo‘sh bo‘lsa — “Parol o‘zgartirish” bilan yangilang.</p>
-        <div class="table-wrap">
+        <div class="field" style="max-width:320px;">
+          <label>Ega telefoni bo'yicha qidirish</label>
+          <input id="owner-phone-filter" type="search" placeholder="+99890..." />
+        </div>
+        <div class="table-wrap" style="margin-top:10px;">
           <table>
             <thead>
               <tr>
@@ -482,9 +564,9 @@
                 <th></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="owners-tbody">
               ${owners.map((o) => `
-                <tr>
+                <tr data-owner-phone="${esc(String(o.phone || '').toLowerCase())}" data-owner-name="${esc(String(o.name || '').toLowerCase())}">
                   <td>${esc(o.name)}</td>
                   <td><code>${esc(o.phone)}</code></td>
                   <td>
@@ -505,6 +587,22 @@
         </div>
       </div>
     `;
+
+    // Do'konlar bloki (bozor + telefon filtr)
+    bindShopTable(panel, shops);
+
+    // Egalar telefon filtri
+    const ownerPhone = $('#owner-phone-filter');
+    ownerPhone?.addEventListener('input', () => {
+      const q = (ownerPhone.value || '').replace(/\s+/g, '').toLowerCase();
+      panel.querySelectorAll('#owners-tbody tr').forEach((tr) => {
+        if (!tr.dataset.ownerPhone && !tr.dataset.ownerName) return;
+        const phone = tr.dataset.ownerPhone || '';
+        const name = tr.dataset.ownerName || '';
+        const ok = !q || phone.includes(q) || name.includes(q);
+        tr.style.display = ok ? '' : 'none';
+      });
+    });
 
     bindPwdToggles(panel);
 
