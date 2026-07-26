@@ -59,13 +59,52 @@
   $('#logout').addEventListener('click', () => {
     token = '';
     localStorage.removeItem(TOKEN_KEY);
+    closeMenu();
     showLogin();
   });
 
+  /* ——— Mobile drawer menu ——— */
+  const menuToggle = $('#menu-toggle');
+  const menuClose = $('#menu-close');
+  const sidebarOverlay = $('#sidebar-overlay');
+  const mobileTabLabel = $('#mobile-tab-label');
+
+  function setMenuOpen(open) {
+    document.body.classList.toggle('menu-open', !!open);
+    if (menuToggle) menuToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (sidebarOverlay) {
+      if (open) sidebarOverlay.hidden = false;
+      else sidebarOverlay.hidden = true;
+    }
+  }
+
+  function closeMenu() {
+    setMenuOpen(false);
+  }
+
+  menuToggle?.addEventListener('click', () => {
+    setMenuOpen(!document.body.classList.contains('menu-open'));
+  });
+  menuClose?.addEventListener('click', closeMenu);
+  sidebarOverlay?.addEventListener('click', closeMenu);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeMenu();
+  });
+  window.addEventListener('resize', () => {
+    if (window.innerWidth > 900) closeMenu();
+  });
+
+  function setActiveNav(nextTab) {
+    tab = nextTab;
+    document.querySelectorAll('.sidebar .nav').forEach((b) => {
+      b.classList.toggle('active', b.dataset.tab === tab);
+    });
+  }
+
   document.querySelectorAll('.sidebar .nav').forEach((btn) => {
     btn.addEventListener('click', () => {
-      tab = btn.dataset.tab;
-      document.querySelectorAll('.sidebar .nav').forEach((b) => b.classList.toggle('active', b === btn));
+      setActiveNav(btn.dataset.tab);
+      closeMenu();
       render();
     });
   });
@@ -85,7 +124,9 @@
       shops: 'Boshqaruv',
       owners: 'Boshqaruv',
     };
-    pageTitle.textContent = titles[tab] || 'Admin';
+    const title = titles[tab] || 'Admin';
+    pageTitle.textContent = title;
+    if (mobileTabLabel) mobileTabLabel.textContent = title;
     const kicker = document.getElementById('page-kicker');
     if (kicker) kicker.textContent = kickers[tab] || 'Panel';
     panel.innerHTML = '<p class="muted">Yuklanmoqda...</p>';
@@ -140,8 +181,8 @@
     `;
     panel.querySelectorAll('[data-go]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        tab = btn.dataset.go;
-        document.querySelectorAll('.sidebar .nav').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+        setActiveNav(btn.dataset.go);
+        closeMenu();
         render();
       });
     });
@@ -151,7 +192,7 @@
     const { report } = await api('/report');
     const s = report.summary;
     panel.innerHTML = `
-      <div class="stats" style="grid-template-columns:repeat(5,1fr);">
+      <div class="stats stats-5">
         <div class="stat"><strong>${s.markets || 0}</strong><span>Bozor</span></div>
         <div class="stat"><strong>${s.shops || 0}</strong><span>Do'kon</span></div>
         <div class="stat"><strong>${s.products || 0}</strong><span>Mahsulot</span></div>

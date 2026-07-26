@@ -2,11 +2,12 @@
 <html lang="uz">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#070b14" />
   <title>Superadmin — Bozor Top</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/admin/admin.css?v=8" />
+  <link rel="stylesheet" href="/admin/admin.css?v=9" />
 </head>
 <body>
   <div id="login-view" class="login-wrap">
@@ -22,13 +23,43 @@
   </div>
 
   <div id="app-view" class="app hidden">
-    <aside class="sidebar">
-      <div class="brand-block">
+    <!-- Mobile top bar -->
+    <header class="mobile-bar" id="mobile-bar">
+      <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Menyu" aria-expanded="false" aria-controls="sidebar">
+        <span class="menu-bars" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </span>
+      </button>
+      <div class="mobile-bar-brand">
+        <span class="brand-mark sm" aria-hidden="true">BT</span>
+        <div>
+          <div class="brand sm">Bozor Top</div>
+          <div class="brand-sub" id="mobile-tab-label">Dashboard</div>
+        </div>
+      </div>
+      <span class="pill compact">local</span>
+    </header>
+
+    <div class="sidebar-overlay" id="sidebar-overlay" hidden></div>
+
+    <aside class="sidebar" id="sidebar">
+      <div class="brand-block desktop-only">
         <div class="brand-mark" aria-hidden="true">BT</div>
         <div class="brand-text">
           <div class="brand">Bozor Top</div>
           <div class="brand-sub">Superadmin</div>
         </div>
+      </div>
+
+      <div class="sidebar-drawer-head mobile-only">
+        <div class="brand-block" style="padding:0;margin:0;">
+          <div class="brand-mark" aria-hidden="true">BT</div>
+          <div class="brand-text">
+            <div class="brand">Bozor Top</div>
+            <div class="brand-sub">Menyu</div>
+          </div>
+        </div>
+        <button type="button" class="icon-btn" id="menu-close" aria-label="Yopish">✕</button>
       </div>
 
       <div class="nav-section">
@@ -100,11 +131,11 @@
           <p class="top-kicker" id="page-kicker">Asosiy</p>
           <h2 id="page-title">Dashboard</h2>
         </div>
-        <span class="pill">localhost only</span>
+        <span class="pill desktop-only">localhost only</span>
       </header>
       <div id="panel"></div>
     </main>
   </div>
-  <script src="/admin/admin.js?v=8"></script>
+  <script src="/admin/admin.js?v=9"></script>
 </body>
 </html>
