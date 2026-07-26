@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Superadmin — Bozor Top</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/admin/admin.css?v=4" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/admin/admin.css?v=8" />
 </head>
 <body>
   <div id="login-view" class="login-wrap">
@@ -23,25 +23,88 @@
 
   <div id="app-view" class="app hidden">
     <aside class="sidebar">
-      <div class="brand">Bozor Top</div>
-      <nav>
-        <button type="button" class="nav active" data-tab="dashboard">Dashboard</button>
-        <button type="button" class="nav" data-tab="report">Hisobot</button>
-        <button type="button" class="nav" data-tab="moderation">Moderatsiya</button>
-        <button type="button" class="nav" data-tab="markets">Bozorlar</button>
-        <button type="button" class="nav" data-tab="shops">Do'konlar</button>
-        <button type="button" class="nav" data-tab="owners">Do'kon egalari</button>
-      </nav>
-      <button type="button" class="btn ghost logout" id="logout">Chiqish</button>
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true">BT</div>
+        <div class="brand-text">
+          <div class="brand">Bozor Top</div>
+          <div class="brand-sub">Superadmin</div>
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-label">Asosiy</div>
+        <nav class="nav-list">
+          <button type="button" class="nav active" data-tab="dashboard">
+            <span class="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5z"/></svg>
+            </span>
+            <span class="nav-copy">
+              <span class="nav-title">Dashboard</span>
+              <span class="nav-desc">Umumiy ko‘rinish</span>
+            </span>
+          </button>
+          <button type="button" class="nav" data-tab="report">
+            <span class="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 16V10"/><path d="M12 16V7"/><path d="M16 16v-4"/></svg>
+            </span>
+            <span class="nav-copy">
+              <span class="nav-title">Hisobot</span>
+              <span class="nav-desc">Statistika va top</span>
+            </span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-label">Boshqaruv</div>
+        <nav class="nav-list">
+          <button type="button" class="nav" data-tab="markets">
+            <span class="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10h16l-1.2 9H5.2L4 10z"/><path d="M3 10 5.5 4h13L21 10"/><path d="M10 14v3"/><path d="M14 14v3"/></svg>
+            </span>
+            <span class="nav-copy">
+              <span class="nav-title">Bozorlar</span>
+              <span class="nav-desc">Bozor qo‘shish</span>
+            </span>
+          </button>
+          <button type="button" class="nav" data-tab="shops">
+            <span class="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8h16v12H4z"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/><path d="M9 13h6"/></svg>
+            </span>
+            <span class="nav-copy">
+              <span class="nav-title">Do‘konlar</span>
+              <span class="nav-desc">Bozor bo‘yicha</span>
+            </span>
+          </button>
+          <button type="button" class="nav" data-tab="owners">
+            <span class="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.5"/><path d="M5 19.5c1.2-3.2 3.7-4.8 7-4.8s5.8 1.6 7 4.8"/></svg>
+            </span>
+            <span class="nav-copy">
+              <span class="nav-title">Do‘kon egalari</span>
+              <span class="nav-desc">Login va parol</span>
+            </span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="sidebar-foot">
+        <div class="sidebar-hint">Faqat localhost</div>
+        <button type="button" class="btn ghost logout" id="logout">Chiqish</button>
+      </div>
     </aside>
+
     <main class="content">
       <header class="top">
-        <h2 id="page-title">Dashboard</h2>
+        <div class="top-left">
+          <p class="top-kicker" id="page-kicker">Asosiy</p>
+          <h2 id="page-title">Dashboard</h2>
+        </div>
         <span class="pill">localhost only</span>
       </header>
       <div id="panel"></div>
     </main>
   </div>
-  <script src="/admin/admin.js?v=4"></script>
+  <script src="/admin/admin.js?v=8"></script>
 </body>
 </html>

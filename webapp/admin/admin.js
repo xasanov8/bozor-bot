@@ -74,17 +74,24 @@
     const titles = {
       dashboard: 'Dashboard',
       report: 'Hisobot',
-      moderation: 'Moderatsiya',
       markets: 'Bozorlar',
       shops: "Do'konlar",
       owners: "Do'kon egalari",
     };
+    const kickers = {
+      dashboard: 'Asosiy',
+      report: 'Asosiy',
+      markets: 'Boshqaruv',
+      shops: 'Boshqaruv',
+      owners: 'Boshqaruv',
+    };
     pageTitle.textContent = titles[tab] || 'Admin';
+    const kicker = document.getElementById('page-kicker');
+    if (kicker) kicker.textContent = kickers[tab] || 'Panel';
     panel.innerHTML = '<p class="muted">Yuklanmoqda...</p>';
     try {
       if (tab === 'dashboard') await renderDashboard();
       else if (tab === 'report') await renderReport();
-      else if (tab === 'moderation') await renderModeration();
       else if (tab === 'markets') await renderMarkets();
       else if (tab === 'shops') await renderShops();
       else if (tab === 'owners') await renderOwners();
@@ -109,11 +116,6 @@
 
   async function renderDashboard() {
     const { stats } = await api('/stats');
-    let pending = 0;
-    try {
-      const mod = await api('/moderation');
-      pending = (mod.products || []).length;
-    } catch (_) {}
     panel.innerHTML = `
       <div class="stats">
         <div class="stat"><strong>${stats.markets}</strong><span>Bozor</span></div>
@@ -122,19 +124,26 @@
         <div class="stat"><strong>${stats.owners}</strong><span>Do'kon egasi</span></div>
       </div>
       <div class="card">
-        <h3>Moderatsiya</h3>
-        <p class="muted">Kutilayotgan mahsulotlar: <strong style="color:var(--warn,#f59e0b)">${pending}</strong></p>
-        <button type="button" class="btn secondary sm mt-8" id="go-mod">Moderatsiyaga o'tish</button>
+        <h3>Tezkor harakatlar</h3>
+        <p class="muted" style="margin-bottom:12px;">Kerakli bo‘limga bir bosishda o‘ting.</p>
+        <div class="row-actions">
+          <button type="button" class="btn secondary sm" data-go="markets">Bozorlar</button>
+          <button type="button" class="btn secondary sm" data-go="shops">Do'konlar</button>
+          <button type="button" class="btn secondary sm" data-go="owners">Do'kon egalari</button>
+          <button type="button" class="btn secondary sm" data-go="report">Hisobot</button>
+        </div>
       </div>
       <div class="card">
         <h3>Qisqa qo'llanma</h3>
-        <p class="muted">1. Bozor qo'shing → 2. Do'kon egasi yarating → 3. Mahsulotlar moderatsiyadan o'tadi → 4. Hisobotda buyurtma va reytinglar.</p>
+        <p class="muted">1. <strong>Bozor</strong> qo‘shing → 2. <strong>Do‘kon egasi</strong> yarating (login + parol) → 3. Egasi bot/WebApp orqali mahsulot qo‘shadi → 4. <strong>Hisobot</strong>da umumiy holatni kuzating.</p>
       </div>
     `;
-    $('#go-mod')?.addEventListener('click', () => {
-      tab = 'moderation';
-      document.querySelectorAll('.sidebar .nav').forEach((b) => b.classList.toggle('active', b.dataset.tab === 'moderation'));
-      render();
+    panel.querySelectorAll('[data-go]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        tab = btn.dataset.go;
+        document.querySelectorAll('.sidebar .nav').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+        render();
+      });
     });
   }
 
@@ -142,12 +151,11 @@
     const { report } = await api('/report');
     const s = report.summary;
     panel.innerHTML = `
-      <div class="stats" style="grid-template-columns:repeat(3,1fr);">
+      <div class="stats" style="grid-template-columns:repeat(5,1fr);">
         <div class="stat"><strong>${s.markets || 0}</strong><span>Bozor</span></div>
         <div class="stat"><strong>${s.shops || 0}</strong><span>Do'kon</span></div>
         <div class="stat"><strong>${s.products || 0}</strong><span>Mahsulot</span></div>
         <div class="stat"><strong>${s.owners || 0}</strong><span>Egasi</span></div>
-        <div class="stat"><strong>${s.pending_moderation || 0}</strong><span>Kutilayotgan</span></div>
         <div class="stat"><strong>${s.promo_products || 0}</strong><span>Aksiya</span></div>
       </div>
       <div class="card">
@@ -177,46 +185,6 @@
         </table></div>
       </div>
     `;
-  }
-
-  async function renderModeration() {
-    const { products } = await api('/moderation');
-    panel.innerHTML = `
-      <div class="card">
-        <h3>Kutilayotgan mahsulotlar (${products.length})</h3>
-        <p class="muted" style="margin-bottom:12px;">Yangi mahsulotlar tasdiqlangach xaridorlarga ko'rinadi.</p>
-        <div class="table-wrap"><table>
-          <thead><tr><th>Mahsulot</th><th>Do'kon</th><th>Bozor</th><th>Narx</th><th>Sana</th><th></th></tr></thead>
-          <tbody>
-            ${products.length ? products.map((p) => `
-              <tr>
-                <td><strong>${esc(p.name)}</strong></td>
-                <td>${esc(p.shop_name)}</td>
-                <td>${esc(p.market_name)}</td>
-                <td>${Number(p.price).toLocaleString('uz-UZ')}</td>
-                <td class="muted">${esc((p.created_at || '').slice(0, 16))}</td>
-                <td class="row-actions">
-                  <button type="button" class="btn primary sm" data-approve="${p.id}">Tasdiqlash</button>
-                  <button type="button" class="btn secondary sm" data-reject="${p.id}">Rad etish</button>
-                </td>
-              </tr>
-            `).join('') : '<tr><td colspan="6">Kutilayotgan mahsulot yo‘q</td></tr>'}
-          </tbody>
-        </table></div>
-      </div>
-    `;
-    panel.querySelectorAll('[data-approve]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        await api(`/moderation/${btn.dataset.approve}`, { method: 'PATCH', body: { status: 'approved' } });
-        renderModeration();
-      });
-    });
-    panel.querySelectorAll('[data-reject]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        await api(`/moderation/${btn.dataset.reject}`, { method: 'PATCH', body: { status: 'rejected' } });
-        renderModeration();
-      });
-    });
   }
 
   async function renderMarkets() {
@@ -333,10 +301,7 @@
             <div>
               <span class="muted">Parol:</span>
               ${shop.owner_password
-                ? `<span class="pwd-wrap">
-                    <code class="pwd-value" data-pwd="${esc(shop.owner_password)}">••••••••</code>
-                    <button type="button" class="btn secondary sm btn-toggle-pwd">Ko'rish</button>
-                  </span>`
+                ? pwdToggleHtml(shop.owner_password)
                 : '<span class="muted">saqlanmagan — Do\'kon egalari bo\'limidan yangilang</span>'}
             </div>
           </div>
@@ -352,23 +317,53 @@
     `;
   }
 
-  function bindPwdToggles(root) {
-    (root || panel).querySelectorAll('.btn-toggle-pwd').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const code = btn.parentElement.querySelector('.pwd-value');
-        const real = code?.dataset?.pwd || '';
-        if (!real) return;
-        const showing = code.dataset.show === '1';
-        if (showing) {
-          code.textContent = '••••••••';
-          code.dataset.show = '0';
-          btn.textContent = "Ko'rish";
-        } else {
-          code.textContent = real;
-          code.dataset.show = '1';
-          btn.textContent = 'Yashirish';
-        }
-      });
+  /** Parollar HTML atributida emas — xotirada (maxfiy va ishonchli) */
+  const pwdStore = new Map();
+  let pwdSeq = 0;
+
+  function pwdToggleHtml(password) {
+    const raw = password == null ? '' : String(password);
+    if (!raw) return '<span class="muted">—</span>';
+    const id = 'p' + String(++pwdSeq);
+    pwdStore.set(id, raw);
+    return (
+      '<span class="pwd-wrap">' +
+        '<code class="pwd-value" data-pwd-id="' + id + '">••••••••</code> ' +
+        '<button type="button" class="btn secondary sm btn-toggle-pwd" data-pwd-id="' + id + '">Ko\'rish</button>' +
+      '</span>'
+    );
+  }
+
+  /** Bir marta document darajasida — qayta chizishdan mustaqil ishlaydi */
+  function bindPwdToggles() {
+    /* no-op: global handler ishlatiladi */
+  }
+
+  if (!window.__bozorPwdToggleBound) {
+    window.__bozorPwdToggleBound = true;
+    document.addEventListener('click', (e) => {
+      const btn = e.target && e.target.closest && e.target.closest('.btn-toggle-pwd');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const id = btn.getAttribute('data-pwd-id') || '';
+      const real = pwdStore.get(id) || '';
+      if (!real) return;
+      const wrap = btn.closest('.pwd-wrap');
+      const code = wrap
+        ? wrap.querySelector('.pwd-value')
+        : document.querySelector('.pwd-value[data-pwd-id="' + id + '"]');
+      if (!code) return;
+      const showing = code.getAttribute('data-show') === '1';
+      if (showing) {
+        code.textContent = '••••••••';
+        code.setAttribute('data-show', '0');
+        btn.textContent = "Ko'rish";
+      } else {
+        code.textContent = real;
+        code.setAttribute('data-show', '1');
+        btn.textContent = 'Yashirish';
+      }
     });
   }
 
@@ -383,14 +378,7 @@
         <td>${esc(s.market_name)}</td>
         <td><code>${esc(s.phone)}</code></td>
         <td>${esc(s.owner_name || '—')}<div class="muted">${esc(s.owner_login_phone || '')}</div></td>
-        <td>
-          ${s.owner_password
-            ? `<span class="pwd-wrap">
-                <code class="pwd-value" data-pwd="${esc(s.owner_password)}">••••••••</code>
-                <button type="button" class="btn secondary sm btn-toggle-pwd">Ko'rish</button>
-              </span>`
-            : '<span class="muted">—</span>'}
-        </td>
+        <td>${pwdToggleHtml(s.owner_password)}</td>
         <td>${s.products_count || 0}</td>
         <td><button type="button" class="btn secondary sm" data-shop="${s.id}">Tafsilot</button></td>
       </tr>`;
@@ -543,16 +531,27 @@
         </form>
       </div>
 
-      ${shopsBrowserHtml(shops, markets, "Do'konlar (bozor bo'yicha)")}
-
       <div class="card">
         <h3>Do'kon egalari ro'yxati</h3>
-        <p class="muted" style="margin-bottom:12px;">Parollar faqat superadminga ko‘rinadi. Eski yozuvlarda parol bo‘sh bo‘lsa — “Parol o‘zgartirish” bilan yangilang.</p>
-        <div class="field" style="max-width:320px;">
-          <label>Ega telefoni bo'yicha qidirish</label>
-          <input id="owner-phone-filter" type="search" placeholder="+99890..." />
+        <p class="muted" style="margin-bottom:12px;">
+          Avval <strong>bozorni tanlang</strong> — shu bozordagi do'kon egalari chiqadi.
+          Keyin ixtiyoriy <strong>telefon</strong> yozib toping. Parollar faqat superadminga ko‘rinadi.
+        </p>
+        <div class="filter-bar">
+          <div class="field" style="margin:0;">
+            <label>Bozor *</label>
+            <select id="owner-market-filter">
+              <option value="">— Barcha bozorlar —</option>
+              ${markets.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field" style="margin:0;">
+            <label>Telefon / ism qidiruv</label>
+            <input id="owner-phone-filter" type="search" placeholder="+99890... yoki ism" />
+          </div>
         </div>
-        <div class="table-wrap" style="margin-top:10px;">
+        <p class="muted" id="owners-count" style="margin:10px 0 8px;"></p>
+        <div class="table-wrap">
           <table>
             <thead>
               <tr>
@@ -560,49 +559,81 @@
                 <th>Telefon</th>
                 <th>Parol</th>
                 <th>Telegram</th>
-                <th>Do'kon</th>
+                <th>Do'konlar</th>
+                <th>Bozorlar</th>
                 <th></th>
               </tr>
             </thead>
             <tbody id="owners-tbody">
-              ${owners.map((o) => `
-                <tr data-owner-phone="${esc(String(o.phone || '').toLowerCase())}" data-owner-name="${esc(String(o.name || '').toLowerCase())}">
+              ${owners.map((o) => {
+                // Shu egaga tegishli do'konlarning bozorlari
+                const ownerShops = shops.filter((s) =>
+                  Number(s.owner_account_id) === Number(o.id) ||
+                  String(s.owner_login_phone || '') === String(o.phone || '')
+                );
+                const marketIds = [...new Set(ownerShops.map((s) => String(s.market_id || '')).filter(Boolean))];
+                const marketNames = [...new Set(ownerShops.map((s) => s.market_name).filter(Boolean))];
+                return `
+                <tr
+                  data-owner-phone="${esc(String(o.phone || '').toLowerCase())}"
+                  data-owner-name="${esc(String(o.name || '').toLowerCase())}"
+                  data-market-ids="${esc(marketIds.join(','))}"
+                >
                   <td>${esc(o.name)}</td>
                   <td><code>${esc(o.phone)}</code></td>
-                  <td>
-                    <span class="pwd-wrap">
-                      <code class="pwd-value" data-pwd="${esc(o.password || '')}">${o.password ? '••••••••' : '—'}</code>
-                      ${o.password ? `<button type="button" class="btn secondary sm btn-toggle-pwd" title="Ko'rsatish">Ko'rish</button>` : ''}
-                    </span>
-                  </td>
+                  <td>${pwdToggleHtml(o.password)}</td>
                   <td>${o.telegram_id ? esc(o.telegram_id) : '—'}</td>
-                  <td>${o.shops_count || 0}</td>
+                  <td>${o.shops_count || ownerShops.length || 0}</td>
+                  <td class="muted" style="font-size:0.85rem;">${esc(marketNames.join(', ') || '—')}</td>
                   <td>
                     <button type="button" class="btn secondary sm" data-reset-pwd="${o.id}" data-name="${esc(o.name)}">Parol o'zgartirish</button>
                   </td>
-                </tr>
-              `).join('') || '<tr><td colspan="6">Hali yo‘q</td></tr>'}
+                </tr>`;
+              }).join('') || '<tr><td colspan="7">Hali yo‘q</td></tr>'}
             </tbody>
           </table>
         </div>
+        <p class="muted" id="owners-empty" hidden style="margin-top:12px;">Bu bozor/telefon bo'yicha ega topilmadi.</p>
       </div>
     `;
 
-    // Do'konlar bloki (bozor + telefon filtr)
-    bindShopTable(panel, shops);
-
-    // Egalar telefon filtri
+    // Egalar: bozor + telefon filtri
+    const ownerMarket = $('#owner-market-filter');
     const ownerPhone = $('#owner-phone-filter');
-    ownerPhone?.addEventListener('input', () => {
-      const q = (ownerPhone.value || '').replace(/\s+/g, '').toLowerCase();
-      panel.querySelectorAll('#owners-tbody tr').forEach((tr) => {
-        if (!tr.dataset.ownerPhone && !tr.dataset.ownerName) return;
+    const ownersCount = $('#owners-count');
+    const ownersEmpty = $('#owners-empty');
+
+    function applyOwnerFilter() {
+      const marketId = ownerMarket?.value || '';
+      const q = (ownerPhone?.value || '').replace(/\s+/g, '').toLowerCase();
+      let shown = 0;
+      panel.querySelectorAll('#owners-tbody tr[data-owner-phone]').forEach((tr) => {
         const phone = tr.dataset.ownerPhone || '';
         const name = tr.dataset.ownerName || '';
-        const ok = !q || phone.includes(q) || name.includes(q);
+        const marketIds = (tr.dataset.marketIds || '').split(',').filter(Boolean);
+        let ok = true;
+        if (marketId) {
+          // Shu bozorda do'koni bor egalargina
+          ok = marketIds.includes(String(marketId));
+        }
+        if (ok && q) {
+          ok = phone.includes(q) || name.includes(q);
+        }
         tr.style.display = ok ? '' : 'none';
+        if (ok) shown += 1;
       });
-    });
+      if (ownersCount) {
+        const marketName = marketId
+          ? (ownerMarket.options[ownerMarket.selectedIndex]?.text || 'Bozor')
+          : 'Barcha bozorlar';
+        ownersCount.textContent = `${marketName}: ${shown} ta do'kon egasi`;
+      }
+      if (ownersEmpty) ownersEmpty.hidden = shown > 0;
+    }
+
+    ownerMarket?.addEventListener('change', applyOwnerFilter);
+    ownerPhone?.addEventListener('input', applyOwnerFilter);
+    applyOwnerFilter();
 
     bindPwdToggles(panel);
 
