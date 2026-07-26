@@ -162,6 +162,7 @@
 
   async function render() {
     stopSupportPoll();
+    destroyReportCharts();
     const titles = {
       dashboard: t('nav_dashboard'),
       report: t('nav_report'),
@@ -256,44 +257,295 @@
     });
   }
 
+  let reportCharts = [];
+
+  function destroyReportCharts() {
+    reportCharts.forEach((c) => {
+      try { c.destroy(); } catch (_) {}
+    });
+    reportCharts = [];
+  }
+
+  function waitForChartJs(timeoutMs = 4000) {
+    return new Promise((resolve) => {
+      if (window.Chart) return resolve(true);
+      const start = Date.now();
+      const id = setInterval(() => {
+        if (window.Chart) {
+          clearInterval(id);
+          resolve(true);
+        } else if (Date.now() - start > timeoutMs) {
+          clearInterval(id);
+          resolve(false);
+        }
+      }, 40);
+    });
+  }
+
   async function renderReport() {
+    destroyReportCharts();
     const { report } = await api('/report');
-    const s = report.summary;
+    const s = report.summary || {};
+    const byMarket = report.byMarket || [];
+    const topShops = report.topShops || [];
+
+    const maxViews = Math.max(1, ...topShops.map((x) => Number(x.views_count || 0)));
+
     panel.innerHTML = `
-      <div class="stats stats-5">
-        <div class="stat"><strong>${s.markets || 0}</strong><span>${esc(t('market'))}</span></div>
-        <div class="stat"><strong>${s.shops || 0}</strong><span>${esc(t('shop'))}</span></div>
-        <div class="stat"><strong>${s.products || 0}</strong><span>${esc(t('product'))}</span></div>
-        <div class="stat"><strong>${s.owners || 0}</strong><span>${esc(t('owners'))}</span></div>
-        <div class="stat"><strong>${s.promo_products || 0}</strong><span>${esc(t('promo'))}</span></div>
+      <div class="report-hero">
+        <div class="report-hero-text">
+          <p class="report-kicker">${esc(t('nav_report'))}</p>
+          <h3>${esc(t('report_overview'))}</h3>
+          <p class="muted">${esc(t('nav_report_d'))}</p>
+        </div>
+        <div class="report-hero-glow" aria-hidden="true"></div>
       </div>
+
+      <div class="report-kpis">
+        <div class="report-kpi kpi-green">
+          <div class="kpi-icon">🏛</div>
+          <div class="kpi-body">
+            <strong>${s.markets || 0}</strong>
+            <span>${esc(t('kpi_markets'))}</span>
+          </div>
+        </div>
+        <div class="report-kpi kpi-blue">
+          <div class="kpi-icon">🛍</div>
+          <div class="kpi-body">
+            <strong>${s.shops || 0}</strong>
+            <span>${esc(t('kpi_shops'))}</span>
+          </div>
+        </div>
+        <div class="report-kpi kpi-violet">
+          <div class="kpi-icon">📦</div>
+          <div class="kpi-body">
+            <strong>${s.products || 0}</strong>
+            <span>${esc(t('kpi_products'))}</span>
+          </div>
+        </div>
+        <div class="report-kpi kpi-amber">
+          <div class="kpi-icon">👤</div>
+          <div class="kpi-body">
+            <strong>${s.owners || 0}</strong>
+            <span>${esc(t('kpi_owners'))}</span>
+          </div>
+        </div>
+        <div class="report-kpi kpi-rose">
+          <div class="kpi-icon">🏷</div>
+          <div class="kpi-body">
+            <strong>${s.promo_products || 0}</strong>
+            <span>${esc(t('kpi_promo'))}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="report-charts-grid">
+        <div class="card report-chart-card">
+          <div class="report-card-head">
+            <h3>${esc(t('report_composition'))}</h3>
+          </div>
+          <div class="chart-wrap chart-wrap-donut">
+            <canvas id="chart-composition"></canvas>
+          </div>
+        </div>
+        <div class="card report-chart-card report-chart-wide">
+          <div class="report-card-head">
+            <h3>${esc(t('report_market_compare'))}</h3>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="chart-markets"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="report-charts-grid report-charts-bottom">
+        <div class="card report-chart-card report-chart-wide">
+          <div class="report-card-head">
+            <h3>${esc(t('report_top_views'))}</h3>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="chart-top-shops"></canvas>
+          </div>
+        </div>
+        <div class="card report-rank-card">
+          <div class="report-card-head">
+            <h3>${esc(t('top_shops'))}</h3>
+          </div>
+          <div class="rank-list">
+            ${topShops.length ? topShops.slice(0, 8).map((shop, i) => {
+              const views = Number(shop.views_count || 0);
+              const pct = Math.round((views / maxViews) * 100);
+              return `
+                <div class="rank-row">
+                  <div class="rank-num">${i + 1}</div>
+                  <div class="rank-meta">
+                    <strong>${esc(shop.name)}</strong>
+                    <span class="muted">${esc(shop.market_name || '')}</span>
+                    <div class="rank-bar"><i style="width:${pct}%"></i></div>
+                  </div>
+                  <div class="rank-val">${views}</div>
+                </div>`;
+            }).join('') : `<p class="muted">${esc(t('none_yet'))}</p>`}
+          </div>
+        </div>
+      </div>
+
       <div class="card">
-        <h3>${esc(t('report_by_market'))}</h3>
+        <div class="report-card-head">
+          <h3>${esc(t('table_details'))} · ${esc(t('report_by_market'))}</h3>
+        </div>
         <div class="table-wrap"><table>
           <thead><tr><th>${esc(t('market'))}</th><th>${esc(t('shop'))}</th><th>${esc(t('product'))}</th></tr></thead>
           <tbody>
-            ${(report.byMarket || []).map((m) => `
+            ${byMarket.map((m) => `
               <tr><td>${esc(m.name)}</td><td>${m.shops}</td><td>${m.products}</td></tr>
-            `).join('')}
-          </tbody>
-        </table></div>
-      </div>
-      <div class="card">
-        <h3>${esc(t('top_shops'))}</h3>
-        <div class="table-wrap"><table>
-          <thead><tr><th>${esc(t('shop'))}</th><th>${esc(t('market'))}</th><th>${esc(t('views'))}</th></tr></thead>
-          <tbody>
-            ${(report.topShops || []).map((s) => `
-              <tr>
-                <td>${esc(s.name)}</td>
-                <td>${esc(s.market_name)}</td>
-                <td>${s.views_count || 0}</td>
-              </tr>
             `).join('') || `<tr><td colspan="3">${esc(t('none_yet'))}</td></tr>`}
           </tbody>
         </table></div>
       </div>
     `;
+
+    const ready = await waitForChartJs();
+    if (!ready || !window.Chart) return;
+
+    const textColor = '#8b9bb8';
+    const gridColor = 'rgba(255,255,255,0.06)';
+    Chart.defaults.color = textColor;
+    Chart.defaults.font.family = '"DM Sans", system-ui, sans-serif';
+    Chart.defaults.borderColor = gridColor;
+
+    // Doughnut — tarkib
+    const compEl = document.getElementById('chart-composition');
+    if (compEl) {
+      reportCharts.push(new Chart(compEl, {
+        type: 'doughnut',
+        data: {
+          labels: [t('kpi_markets'), t('kpi_shops'), t('kpi_products'), t('kpi_owners'), t('kpi_promo')],
+          datasets: [{
+            data: [
+              Number(s.markets || 0),
+              Number(s.shops || 0),
+              Number(s.products || 0),
+              Number(s.owners || 0),
+              Number(s.promo_products || 0),
+            ],
+            backgroundColor: [
+              'rgba(34, 197, 94, 0.85)',
+              'rgba(56, 189, 248, 0.85)',
+              'rgba(167, 139, 250, 0.85)',
+              'rgba(251, 191, 36, 0.85)',
+              'rgba(244, 114, 182, 0.85)',
+            ],
+            borderColor: '#121a2b',
+            borderWidth: 3,
+            hoverOffset: 8,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '62%',
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: { boxWidth: 12, padding: 14, usePointStyle: true },
+            },
+          },
+        },
+      }));
+    }
+
+    // Bar — bozorlar
+    const mEl = document.getElementById('chart-markets');
+    if (mEl) {
+      reportCharts.push(new Chart(mEl, {
+        type: 'bar',
+        data: {
+          labels: byMarket.map((m) => m.name),
+          datasets: [
+            {
+              label: t('chart_shops'),
+              data: byMarket.map((m) => Number(m.shops || 0)),
+              backgroundColor: 'rgba(56, 189, 248, 0.75)',
+              borderRadius: 8,
+              borderSkipped: false,
+            },
+            {
+              label: t('chart_products'),
+              data: byMarket.map((m) => Number(m.products || 0)),
+              backgroundColor: 'rgba(34, 197, 94, 0.75)',
+              borderRadius: 8,
+              borderSkipped: false,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            x: {
+              grid: { display: false },
+              ticks: { maxRotation: 40, minRotation: 0 },
+            },
+            y: {
+              beginAtZero: true,
+              grid: { color: gridColor },
+              ticks: { precision: 0 },
+            },
+          },
+          plugins: {
+            legend: {
+              position: 'top',
+              align: 'end',
+              labels: { boxWidth: 12, usePointStyle: true, padding: 16 },
+            },
+          },
+        },
+      }));
+    }
+
+    // Horizontal bar — top shops views
+    const tEl = document.getElementById('chart-top-shops');
+    if (tEl) {
+      const top = [...topShops].slice(0, 8).reverse();
+      reportCharts.push(new Chart(tEl, {
+        type: 'bar',
+        data: {
+          labels: top.map((x) => x.name),
+          datasets: [{
+            label: t('chart_views'),
+            data: top.map((x) => Number(x.views_count || 0)),
+            backgroundColor: (ctx) => {
+              const i = ctx.dataIndex;
+              const n = top.length || 1;
+              const a = 0.45 + (i / Math.max(1, n - 1)) * 0.45;
+              return `rgba(34, 197, 94, ${a})`;
+            },
+            borderRadius: 8,
+            borderSkipped: false,
+          }],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: {
+              beginAtZero: true,
+              grid: { color: gridColor },
+              ticks: { precision: 0 },
+            },
+            y: {
+              grid: { display: false },
+            },
+          },
+          plugins: {
+            legend: { display: false },
+          },
+        },
+      }));
+    }
   }
 
   async function renderSupport() {
