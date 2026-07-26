@@ -4,5 +4,8 @@ data/*.db
 data/*.db-*
 uploads/*
 !uploads/.gitkeep
+!uploads/seed/
+uploads/seed/*
+!uploads/seed/market_*.jpg
 .DS_Store
 *.log

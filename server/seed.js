@@ -18,6 +18,7 @@ function seed() {
       description: "Toshkentdagi yirik dehqon bozori. Meva-sabzavot, oziq-ovqat va uy-ro'zg'or mollari.",
       city: 'Toshkent',
       address: "Toshkent sh., O'rikzor massivi",
+      imageUrl: '/uploads/seed/market_orikzor.jpg',
     },
     {
       name: 'Chorsu',
@@ -25,6 +26,7 @@ function seed() {
       description: 'Tarixiy bozor — ziravorlar, quruq mevalar, milliy taomlar.',
       city: 'Toshkent',
       address: 'Toshkent sh., Chorsu maydoni',
+      imageUrl: '/uploads/seed/market_chorsu.jpg',
     },
     {
       name: 'Qoʻyliq',
@@ -32,6 +34,7 @@ function seed() {
       description: "Yirik oziq-ovqat va kiyim-kechak bozori.",
       city: 'Toshkent',
       address: "Toshkent sh., Qo'yliq",
+      imageUrl: '/uploads/seed/market_qoyliq.jpg',
     },
     {
       name: 'Farhod',
@@ -39,6 +42,7 @@ function seed() {
       description: 'Sergeli tumanidagi katta bozor.',
       city: 'Toshkent',
       address: 'Toshkent sh., Sergeli',
+      imageUrl: '/uploads/seed/market_farhod.jpg',
     },
   ];
 
