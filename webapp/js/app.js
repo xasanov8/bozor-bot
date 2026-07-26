@@ -1804,7 +1804,7 @@
                   <div>${escapeHtml(m.body)}</div>
                   <div class="chat-time">${escapeHtml((m.created_at || '').slice(11, 16))}</div>
                 </div>
-              `).join('') : '<p class="text-muted text-center">${t('support_empty')}</p>'}
+              `).join('') : `<p class="text-muted text-center">${escapeHtml(t('support_empty'))}</p>`}
             </div>
             <div class="chat-input-row">
               <input type="text" id="support-input" placeholder="${t('support_ph')}" maxlength="2000" value="${escapeHtml(draft)}" autocomplete="off" />
@@ -1956,7 +1956,7 @@
                   <div>${escapeHtml(m.body)}</div>
                   <div class="chat-time">${escapeHtml((m.created_at || '').slice(11, 16))}</div>
                 </div>
-              `).join('') : '<p class="text-muted text-center">${t('chat_empty')}</p>'}
+              `).join('') : `<p class="text-muted text-center">${escapeHtml(t('chat_empty'))}</p>`}
             </div>
             <div class="chat-input-row">
               <input type="text" id="chat-input" placeholder="${t('chat_ph')}" maxlength="1000" value="${escapeHtml(draft)}" autocomplete="off" />
