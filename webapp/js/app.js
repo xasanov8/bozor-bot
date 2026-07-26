@@ -18,9 +18,12 @@
   const pageTitle = $('#page-title');
   const pageSub = $('#page-sub');
   const btnBack = $('#btn-back');
-  const btnOwnerChat = $('#btn-owner-chat');
+  const btnChatTop = $('#btn-chat-top');
+  const chatBadge = $('#chat-badge');
   const toastEl = $('#toast');
   let chatPollTimer = null;
+  let unreadPollTimer = null;
+  let lastUnreadSnapshot = '';
 
   function stopChatPoll() {
     if (chatPollTimer) {
@@ -237,19 +240,65 @@
       }
       el.classList.toggle('hidden', !roles.includes(state.role));
     });
-    // Do'kon egasi: tepada chat ikonkasi
-    if (btnOwnerChat) {
-      btnOwnerChat.classList.toggle('hidden', state.role !== 'owner' || !state.ownerToken);
+    // Chat ikonkasi: egasi (token bilan) yoki xaridor
+    if (btnChatTop) {
+      const show =
+        (state.role === 'owner' && !!state.ownerToken) ||
+        state.role === 'buyer';
+      btnChatTop.classList.toggle('hidden', !show);
     }
     updateCartBadge();
+    refreshChatBadge();
   }
 
-  btnOwnerChat?.addEventListener('click', () => {
+  btnChatTop?.addEventListener('click', () => {
     haptic('light');
     if (state.role === 'owner' && state.ownerToken) {
       navigate('owner-chats', {}, { push: true });
+    } else if (state.role === 'buyer') {
+      navigate('chats', {}, { push: true });
     }
   });
+
+  async function refreshChatBadge() {
+    if (!btnChatTop || !chatBadge) return;
+    if (!state.role || state.route?.name === 'role') {
+      chatBadge.classList.add('hidden');
+      return;
+    }
+    try {
+      let data;
+      if (state.role === 'owner' && state.ownerToken) {
+        data = await api('/owner/chats/unread');
+      } else if (state.role === 'buyer') {
+        data = await api('/chats/unread');
+      } else {
+        chatBadge.classList.add('hidden');
+        return;
+      }
+      const total = Number(data.total || 0);
+      chatBadge.textContent = total > 99 ? '99+' : String(total);
+      chatBadge.classList.toggle('hidden', total <= 0);
+
+      // Yangi xabar kelganda qisqa eslatma (kim nechta)
+      const snap = JSON.stringify(data.threads || []);
+      if (lastUnreadSnapshot && snap !== lastUnreadSnapshot && total > 0 && data.threads?.length) {
+        const parts = data.threads.slice(0, 3).map((t) => `${t.name}: ${t.unread}`);
+        toast(`Yangi xabar · ${parts.join(' · ')}`, 'success');
+      }
+      lastUnreadSnapshot = snap;
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function startUnreadPolling() {
+    if (unreadPollTimer) clearInterval(unreadPollTimer);
+    refreshChatBadge();
+    unreadPollTimer = setInterval(() => {
+      if (!document.hidden) refreshChatBadge();
+    }, 3000);
+  }
 
   function captureOwnerTokenFromUrl() {
     try {
@@ -752,38 +801,19 @@
     });
   }
 
-  function getSearchFiltersFromDom() {
-    return {
-      category: $('#f-category')?.value || 'all',
-      minPrice: $('#f-min')?.value || '',
-      maxPrice: $('#f-max')?.value || '',
-      minRating: $('#f-rating')?.value || '',
-      promoOnly: $('#f-promo')?.checked ? '1' : '',
-      openNow: $('#f-open')?.checked ? '1' : '',
-      sort: $('#f-sort')?.value || 'relevance',
-    };
-  }
-
-  function filtersQuery(f) {
-    const p = new URLSearchParams();
-    Object.entries(f).forEach(([k, v]) => {
-      if (v !== '' && v != null && v !== 'all') p.set(k, v);
-    });
-    return p.toString();
-  }
-
-  function starsHtml(avg, count) {
-    const a = Number(avg) || 0;
-    const full = Math.round(a);
-    return `<span class="stars" title="${a.toFixed(1)}">${'★'.repeat(Math.min(5, full))}${'☆'.repeat(Math.max(0, 5 - full))}</span>${count != null ? `<span class="stars-count">(${count})</span>` : ''}`;
-  }
-
   function priceHtml(p) {
     const eff = p.effective_price != null ? p.effective_price : p.price;
     if (p.has_promo || (p.is_promo && p.discount_percent > 0)) {
       return `<span class="price-tag">${formatPrice(eff)} <small class="old-price">${formatPrice(p.old_price || p.price)}</small> <span class="promo-chip">-${p.discount_percent || 0}%</span></span>`;
     }
     return `<span class="price-tag">${formatPrice(eff)} <small>/${escapeHtml(p.unit || 'dona')}</small></span>`;
+  }
+
+  function starsHtml(avg, count) {
+    const a = Number(avg) || 0;
+    if (!count) return '';
+    const full = Math.min(5, Math.round(a));
+    return `<span class="stars">${'★'.repeat(full)}${'☆'.repeat(5 - full)}</span><span class="stars-count">(${count})</span>`;
   }
 
   async function renderSearch(marketId, q = '') {
@@ -793,78 +823,33 @@
     setNav('search');
     applyRoleChrome();
     const markets = await loadMarkets();
-    let categories = [];
-    try {
-      const c = await api('/categories');
-      categories = c.categories || [];
-    } catch (_) {
-      categories = [{ id: 'boshqa', label: 'Boshqa' }];
-    }
     const mid = Number(marketId) || state.selectedMarketId || markets[0]?.id;
     state.selectedMarketId = mid;
-    const market = markets.find((m) => m.id === mid);
-    setHeader('Qidiruv', marketLabel(market?.name) || 'Bozor', true);
+    setHeader('Qidiruv', 'Mahsulot qidirish', true);
 
-    const prefMarket = state.selectedMarketId || mid;
     view.innerHTML = `
       <select class="market-select" id="search-market">
-        <option value="all" selected>Barcha bozorlar</option>
+        <option value="all">Barcha bozorlar</option>
         ${markets.map((m) => `
-          <option value="${m.id}" ${!state.searchAllMarkets && m.id === prefMarket ? 'selected' : ''}>${escapeHtml(marketLabel(m.name))} — ${escapeHtml(m.city || '')}</option>
+          <option value="${m.id}">${escapeHtml(marketLabel(m.name))}</option>
         `).join('')}
       </select>
       <div class="search-box">
         ${iconSearch()}
         <input type="search" id="search-q" placeholder="Masalan: olma, guruch, non..." value="${escapeHtml(q || state.searchQuery)}" autocomplete="off" autofocus />
       </div>
-      <div class="filter-panel form-card">
-        <h3 style="margin-bottom:10px;">Filtr</h3>
-        <div class="filter-grid">
-          <div class="field"><label>Kategoriya</label>
-            <select id="f-category">
-              <option value="all">Hammasi</option>
-              ${categories.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.label)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="field"><label>Saralash</label>
-            <select id="f-sort">
-              <option value="relevance">Mosligi</option>
-              <option value="price_asc">Arzonroq</option>
-              <option value="price_desc">Qimmatroq</option>
-              <option value="rating">Reyting</option>
-              <option value="promo">Aksiya</option>
-            </select>
-          </div>
-          <div class="field"><label>Min narx</label><input id="f-min" type="number" min="0" placeholder="0" /></div>
-          <div class="field"><label>Max narx</label><input id="f-max" type="number" min="0" placeholder="—" /></div>
-          <div class="field"><label>Min reyting</label>
-            <select id="f-rating">
-              <option value="">Hammasi</option>
-              <option value="4">4+ yulduz</option>
-              <option value="3">3+ yulduz</option>
-            </select>
-          </div>
-        </div>
-        <div class="filter-checks">
-          <label class="check"><input type="checkbox" id="f-promo" /> Faqat aksiya</label>
-          <label class="check"><input type="checkbox" id="f-open" /> Hozir ochiq</label>
-        </div>
-        <button type="button" class="btn btn-primary btn-block mt-8" id="f-apply">Qidirish</button>
-      </div>
       <div id="search-results">
         <div class="results-empty">
           <div class="empty-icon">${iconSearch()}</div>
           <h4>Qidiruv</h4>
-          <p>«olma», «guruch» deb yozing yoki «Qidirish» bosing</p>
+          <p>«olma», «guruch» deb yozing</p>
         </div>
       </div>
     `;
 
     const marketSelect = $('#search-market');
-    // Bozor sahifasidan kelgan bo'lsa shu bozor, aks holda barcha bozorlar
     if (marketSelect) {
-      if (marketId) marketSelect.value = String(marketId);
-      else marketSelect.value = 'all';
+      marketSelect.value = marketId ? String(marketId) : 'all';
     }
 
     const input = $('#search-q');
@@ -877,12 +862,20 @@
       const marketVal = marketSelect.value;
       const all = marketVal === 'all';
       if (!all) state.selectedMarketId = Number(marketVal);
-      const fq = filtersQuery(getSearchFiltersFromDom());
+      if (!query) {
+        resultsEl.innerHTML = `
+          <div class="results-empty">
+            <div class="empty-icon">${iconSearch()}</div>
+            <h4>Nima qidiryapsiz?</h4>
+            <p>So'z yozing — natija chiqadi</p>
+          </div>`;
+        return;
+      }
       resultsEl.innerHTML = `<div class="loading"><div class="spinner"></div><span>Qidirilmoqda...</span></div>`;
       try {
         const path = all
-          ? `/search?q=${encodeURIComponent(query)}${fq ? `&${fq}` : ''}`
-          : `/markets/${marketVal}/search?q=${encodeURIComponent(query)}${fq ? `&${fq}` : ''}`;
+          ? `/search?q=${encodeURIComponent(query)}`
+          : `/markets/${marketVal}/search?q=${encodeURIComponent(query)}`;
         const data = await api(path);
         renderSearchResults(resultsEl, data);
       } catch (err) {
@@ -892,15 +885,11 @@
 
     function onInput() {
       clearTimeout(debounce);
-      debounce = setTimeout(runSearch, 400);
+      debounce = setTimeout(runSearch, 350);
     }
 
     input.addEventListener('input', onInput);
     marketSelect.addEventListener('change', runSearch);
-    $('#f-apply')?.addEventListener('click', runSearch);
-    ['f-category', 'f-sort', 'f-rating', 'f-promo', 'f-open'].forEach((id) => {
-      $(`#${id}`)?.addEventListener('change', runSearch);
-    });
 
     if (q) runSearch();
     else setTimeout(() => input.focus(), 100);
@@ -915,7 +904,7 @@
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>
           </div>
           <h4>Topilmadi</h4>
-          <p>${query ? `"${escapeHtml(query)}" bo'yicha` : 'Filtr bo\'yicha'} mahsulot yo'q. Boshqa so'z yoki «Barcha bozorlar» ni tanlang.</p>
+          <p>${query ? `"${escapeHtml(query)}" bo'yicha` : ''} mahsulot yo'q. Boshqa so'z yoki «Barcha bozorlar» ni tanlang.</p>
         </div>`;
       return;
     }
@@ -931,7 +920,6 @@
           <div class="result-shop-head">
             <h4>${escapeHtml(group.shop_name)} ${group.is_open_now ? '<span class="chip accent">Ochiq</span>' : '<span class="chip">Yopiq</span>'}</h4>
             ${group.market_name ? `<p class="text-muted" style="font-size:0.8rem;margin:4px 0;">${escapeHtml(marketLabel(group.market_name))}</p>` : ''}
-            <div class="contact-row">${starsHtml(group.shop_rating, group.shop_rating_count)}</div>
             <div class="shop-contacts">
               <div class="contact-row">${iconPin()}<span>${escapeHtml(group.shop_address)}</span></div>
               <div class="contact-row">${iconPhone()}<a href="${phoneLink(group.shop_phone)}" data-call-shop="${group.shop_id}">${escapeHtml(group.shop_phone)}</a></div>
@@ -950,7 +938,7 @@
                   <div class="product-thumb">${productThumb(p)}</div>
                   <div class="product-info">
                     <h5>${escapeHtml(p.name)} ${p.has_promo ? '<span class="promo-chip">Aksiya</span>' : ''}</h5>
-                    <p>${escapeHtml(p.description || p.unit || '')} ${starsHtml(p.rating_avg, p.rating_count)}</p>
+                    <p>${escapeHtml(p.description || p.unit || '')}</p>
                   </div>
                   <div>${priceHtml(p)}</div>
                 </button>
@@ -1719,14 +1707,16 @@
     }
     view.innerHTML = threads.length ? `
       <div class="stack">
-        ${threads.map((t) => `
+        ${threads.map((t) => {
+          const u = Number(t.unread || t.buyer_unread || 0);
+          return `
           <button type="button" class="owner-shop" style="width:100%;text-align:left;" data-thread="${t.id}" data-shop="${t.shop_id}">
-            <h4>${escapeHtml(t.shop_name)}</h4>
+            <h4>${escapeHtml(t.shop_name)} ${u > 0 ? `<span class="chip accent">${u} yangi</span>` : ''}</h4>
             <p class="text-muted">${escapeHtml(t.market_name || '')}</p>
             <p style="margin-top:6px;">${escapeHtml(t.last_message || '')}</p>
             <p class="text-muted" style="font-size:0.75rem;">${escapeHtml((t.last_at || '').slice(0, 16))}</p>
-          </button>
-        `).join('')}
+          </button>`;
+        }).join('')}
       </div>
     ` : `<div class="results-empty"><h4>Chat yo'q</h4><p>Do'kon sahifasidan «Chat» bosing</p></div>`;
     view.querySelectorAll('[data-thread]').forEach((el) => {
@@ -1851,10 +1841,10 @@
     stopChatPoll();
     paint();
     chatPollTimer = setInterval(poll, 2000);
+    refreshChatBadge();
   }
 
   async function renderOwnerReviews() {
-    // Sharxlar olib tashlandi
     navigate('owner', {}, { push: false });
   }
 
@@ -1871,17 +1861,24 @@
       view.innerHTML = `<div class="results-empty"><p>${escapeHtml(err.message)}</p></div>`;
       return;
     }
-    view.innerHTML = threads.length ? `
+    const totalNew = threads.reduce((s, t) => s + Number(t.unread || t.owner_unread || 0), 0);
+    view.innerHTML = `
+      ${totalNew > 0 ? `<div class="form-card mb-16"><strong>${totalNew}</strong> ta yangi xabar</div>` : ''}
+      ${threads.length ? `
       <div class="stack">
-        ${threads.map((t) => `
+        ${threads.map((t) => {
+          const u = Number(t.unread || t.owner_unread || 0);
+          return `
           <button type="button" class="owner-shop" style="width:100%;text-align:left;" data-othread="${t.id}">
-            <h4>${escapeHtml(t.buyer_name || 'Xaridor')} · ${escapeHtml(t.shop_name)}</h4>
+            <h4>${escapeHtml(t.buyer_name || 'Xaridor')} · ${escapeHtml(t.shop_name)}
+              ${u > 0 ? `<span class="chip accent">${u} yangi</span>` : ''}</h4>
             <p>${escapeHtml(t.last_message || '')}</p>
             <p class="text-muted" style="font-size:0.75rem;">${escapeHtml((t.last_at || '').slice(0, 16))}</p>
-          </button>
-        `).join('')}
+          </button>`;
+        }).join('')}
       </div>
-    ` : `<div class="results-empty"><h4>Chat yo'q</h4><p>Xaridorlar do'konga chat yozganda shu yerda chiqadi</p></div>`;
+    ` : `<div class="results-empty"><h4>Chat yo'q</h4><p>Xaridorlar do'konga chat yozganda shu yerda chiqadi</p></div>`}
+    `;
     view.querySelectorAll('[data-othread]').forEach((el) => {
       el.addEventListener('click', () => navigate('owner-chat', { threadId: Number(el.dataset.othread) }));
     });
@@ -1976,6 +1973,7 @@
     stopChatPoll();
     paint();
     chatPollTimer = setInterval(poll, 2000);
+    refreshChatBadge();
   }
 
   // ——— Live updates (F5 shart emas) ———
@@ -2184,6 +2182,7 @@
     }
 
     startLiveUpdates();
+    startUnreadPolling();
     updateCartBadge();
   }
 

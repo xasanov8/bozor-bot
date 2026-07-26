@@ -327,6 +327,12 @@ router.get('/chats', (req, res) => {
   res.json({ threads: features.getBuyerThreads(buyerId) });
 });
 
+router.get('/chats/unread', (req, res) => {
+  const buyerId = getBuyerId(req);
+  if (!buyerId) return res.json({ total: 0, threads: [] });
+  res.json(features.getBuyerUnreadSummary(buyerId));
+});
+
 router.get('/chats/thread/:id', (req, res) => {
   const buyerId = getBuyerId(req);
   if (!buyerId) return res.status(401).json({ error: 'Xaridor aniqlanmadi' });
@@ -335,8 +341,10 @@ router.get('/chats/thread/:id', (req, res) => {
   if (String(thread.buyer_telegram_id) !== String(buyerId)) {
     return res.status(403).json({ error: "Ruxsat yo'q" });
   }
+  features.markThreadRead(thread.id, 'buyer');
   const messages = features.getThreadMessages(thread.id);
-  res.json({ thread, messages });
+  const fresh = features.getThreadById(thread.id);
+  res.json({ thread: fresh, messages });
 });
 
 router.post('/chats/send', (req, res) => {
@@ -370,6 +378,10 @@ router.get('/owner/chats', requireOwner, (req, res) => {
   });
 });
 
+router.get('/owner/chats/unread', requireOwner, (req, res) => {
+  res.json(features.getOwnerUnreadSummary(req.owner?.id, req.identity?.telegramId || req.tgUser?.id));
+});
+
 router.get('/owner/chats/:id', requireOwner, (req, res) => {
   const thread = features.getThreadById(Number(req.params.id));
   if (!thread) return res.status(404).json({ error: 'Chat topilmadi' });
@@ -377,7 +389,9 @@ router.get('/owner/chats/:id', requireOwner, (req, res) => {
   if (!shop || !db.shopOwnedBy(shop, req.identity.telegramId, req.identity.ownerId)) {
     return res.status(403).json({ error: "Ruxsat yo'q" });
   }
-  res.json({ thread, messages: features.getThreadMessages(thread.id) });
+  features.markThreadRead(thread.id, 'owner');
+  const fresh = features.getThreadById(thread.id);
+  res.json({ thread: fresh, messages: features.getThreadMessages(thread.id) });
 });
 
 router.post('/owner/chats/:id/reply', requireOwner, (req, res) => {

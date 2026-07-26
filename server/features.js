@@ -119,6 +119,14 @@ function migrateFeatures() {
   if (!revCols.includes('owner_reply_at')) {
     db.exec('ALTER TABLE reviews ADD COLUMN owner_reply_at TEXT');
   }
+
+  const chatCols = db.prepare('PRAGMA table_info(chat_threads)').all().map((c) => c.name);
+  if (!chatCols.includes('buyer_unread')) {
+    db.exec('ALTER TABLE chat_threads ADD COLUMN buyer_unread INTEGER DEFAULT 0');
+  }
+  if (!chatCols.includes('owner_unread')) {
+    db.exec('ALTER TABLE chat_threads ADD COLUMN owner_unread INTEGER DEFAULT 0');
+  }
 }
 
 migrateFeatures();
@@ -553,12 +561,31 @@ function sendChatMessage({ shopId, buyerTelegramId, buyerName, senderRole, sende
     INSERT INTO chat_messages (thread_id, sender_role, sender_id, body)
     VALUES (?, ?, ?, ?)
   `).run(thread.id, senderRole, senderId ? String(senderId) : null, text);
-  db.prepare(`
-    UPDATE chat_threads SET last_message = ?, last_at = datetime('now'),
-      buyer_name = COALESCE(?, buyer_name)
-    WHERE id = ?
-  `).run(text, buyerName || null, thread.id);
+
+  // Qarshi tomonga o'qilmagan sonini oshirish
+  if (senderRole === 'buyer') {
+    db.prepare(`
+      UPDATE chat_threads SET last_message = ?, last_at = datetime('now'),
+        buyer_name = COALESCE(?, buyer_name),
+        owner_unread = COALESCE(owner_unread, 0) + 1
+      WHERE id = ?
+    `).run(text, buyerName || null, thread.id);
+  } else {
+    db.prepare(`
+      UPDATE chat_threads SET last_message = ?, last_at = datetime('now'),
+        buyer_unread = COALESCE(buyer_unread, 0) + 1
+      WHERE id = ?
+    `).run(text, thread.id);
+  }
   return db.prepare('SELECT * FROM chat_messages WHERE id = ?').get(ins.lastInsertRowid);
+}
+
+function markThreadRead(threadId, role) {
+  if (role === 'buyer') {
+    db.prepare('UPDATE chat_threads SET buyer_unread = 0 WHERE id = ?').run(threadId);
+  } else if (role === 'owner') {
+    db.prepare('UPDATE chat_threads SET owner_unread = 0 WHERE id = ?').run(threadId);
+  }
 }
 
 function getThreadMessages(threadId, limit = 100) {
@@ -569,7 +596,8 @@ function getThreadMessages(threadId, limit = 100) {
 
 function getBuyerThreads(buyerTelegramId) {
   return db.prepare(`
-    SELECT t.*, s.name AS shop_name, s.phone AS shop_phone, m.name AS market_name
+    SELECT t.*, s.name AS shop_name, s.phone AS shop_phone, m.name AS market_name,
+      COALESCE(t.buyer_unread, 0) AS unread
     FROM chat_threads t
     JOIN shops s ON s.id = t.shop_id
     JOIN markets m ON m.id = s.market_id
@@ -586,12 +614,46 @@ function getOwnerThreads(ownerId, telegramId) {
   if (!ids.length) return [];
   const ph = ids.map(() => '?').join(',');
   return db.prepare(`
-    SELECT t.*, s.name AS shop_name, s.phone AS shop_phone
+    SELECT t.*, s.name AS shop_name, s.phone AS shop_phone,
+      COALESCE(t.owner_unread, 0) AS unread
     FROM chat_threads t
     JOIN shops s ON s.id = t.shop_id
     WHERE t.shop_id IN (${ph})
-    ORDER BY t.last_at DESC
+    ORDER BY COALESCE(t.owner_unread, 0) DESC, t.last_at DESC
   `).all(...ids);
+}
+
+function getBuyerUnreadSummary(buyerTelegramId) {
+  const threads = getBuyerThreads(buyerTelegramId);
+  const withUnread = threads.filter((t) => (t.unread || t.buyer_unread || 0) > 0);
+  const total = withUnread.reduce((s, t) => s + Number(t.unread || t.buyer_unread || 0), 0);
+  return {
+    total,
+    threads: withUnread.map((t) => ({
+      thread_id: t.id,
+      shop_id: t.shop_id,
+      name: t.shop_name,
+      unread: Number(t.unread || t.buyer_unread || 0),
+      last_message: t.last_message,
+    })),
+  };
+}
+
+function getOwnerUnreadSummary(ownerId, telegramId) {
+  const threads = getOwnerThreads(ownerId, telegramId);
+  const withUnread = threads.filter((t) => (t.unread || t.owner_unread || 0) > 0);
+  const total = withUnread.reduce((s, t) => s + Number(t.unread || t.owner_unread || 0), 0);
+  return {
+    total,
+    threads: withUnread.map((t) => ({
+      thread_id: t.id,
+      shop_id: t.shop_id,
+      name: t.buyer_name || 'Xaridor',
+      shop_name: t.shop_name,
+      unread: Number(t.unread || t.owner_unread || 0),
+      last_message: t.last_message,
+    })),
+  };
 }
 
 function getThreadById(id) {
@@ -783,9 +845,12 @@ module.exports = {
   getReviewsForProduct,
   getReviewsForShop,
   sendChatMessage,
+  markThreadRead,
   getThreadMessages,
   getBuyerThreads,
   getOwnerThreads,
+  getBuyerUnreadSummary,
+  getOwnerUnreadSummary,
   getThreadById,
   getOrCreateThread,
   updateShopHours,
