@@ -4,6 +4,34 @@
   let tab = 'dashboard';
   let marketsCache = [];
 
+  const t = (key, vars) => (window.AdminI18N ? window.AdminI18N.t(key, vars) : key);
+
+  function syncLangButtons() {
+    const lang = window.AdminI18N?.getLang?.() || 'uz';
+    document.querySelectorAll('.lang-btn[data-lang]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.lang === lang);
+    });
+  }
+
+  function applyStaticI18n() {
+    window.AdminI18N?.applyDom?.(document);
+    syncLangButtons();
+  }
+
+  function bindLangSwitch() {
+    document.querySelectorAll('.lang-btn[data-lang]').forEach((btn) => {
+      if (btn._langBound) return;
+      btn._langBound = true;
+      btn.addEventListener('click', () => {
+        const next = btn.dataset.lang;
+        if (!next || next === window.AdminI18N?.getLang?.()) return;
+        window.AdminI18N.setLang(next);
+        applyStaticI18n();
+        if (token && !appView.classList.contains('hidden')) render();
+      });
+    });
+  }
+
   const $ = (s) => document.querySelector(s);
   const loginView = $('#login-view');
   const appView = $('#app-view');
@@ -135,27 +163,27 @@
   async function render() {
     stopSupportPoll();
     const titles = {
-      dashboard: 'Dashboard',
-      report: 'Hisobot',
-      support: 'Yordam',
-      markets: 'Bozorlar',
-      shops: "Do'konlar",
-      owners: "Do'kon egalari",
+      dashboard: t('nav_dashboard'),
+      report: t('nav_report'),
+      support: t('nav_support'),
+      markets: t('nav_markets'),
+      shops: t('nav_shops'),
+      owners: t('nav_owners'),
     };
     const kickers = {
-      dashboard: 'Asosiy',
-      report: 'Asosiy',
-      support: 'Asosiy',
-      markets: 'Boshqaruv',
-      shops: 'Boshqaruv',
-      owners: 'Boshqaruv',
+      dashboard: t('kicker_main'),
+      report: t('kicker_main'),
+      support: t('kicker_main'),
+      markets: t('kicker_manage'),
+      shops: t('kicker_manage'),
+      owners: t('kicker_manage'),
     };
     const title = titles[tab] || 'Admin';
     pageTitle.textContent = title;
     if (mobileTabLabel) mobileTabLabel.textContent = title;
     const kicker = document.getElementById('page-kicker');
     if (kicker) kicker.textContent = kickers[tab] || 'Panel';
-    panel.innerHTML = '<p class="muted">Yuklanmoqda...</p>';
+    panel.innerHTML = `<p class="muted">${t('loading')}</p>`;
     try {
       if (tab === 'dashboard') await renderDashboard();
       else if (tab === 'report') await renderReport();
@@ -192,31 +220,31 @@
     } catch (_) {}
     panel.innerHTML = `
       <div class="stats">
-        <div class="stat"><strong>${stats.markets}</strong><span>Bozor</span></div>
-        <div class="stat"><strong>${stats.shops}</strong><span>Do'kon</span></div>
-        <div class="stat"><strong>${stats.products}</strong><span>Mahsulot</span></div>
-        <div class="stat"><strong>${stats.owners}</strong><span>Do'kon egasi</span></div>
+        <div class="stat"><strong>${stats.markets}</strong><span>${esc(t('market'))}</span></div>
+        <div class="stat"><strong>${stats.shops}</strong><span>${esc(t('shop'))}</span></div>
+        <div class="stat"><strong>${stats.products}</strong><span>${esc(t('product'))}</span></div>
+        <div class="stat"><strong>${stats.owners}</strong><span>${esc(t('owner'))}</span></div>
       </div>
       ${supportUnread > 0 ? `
       <div class="card">
-        <h3>Yordam — yangi xabarlar</h3>
-        <p class="muted" style="margin-bottom:12px;"><strong style="color:var(--warn)">${supportUnread}</strong> ta o‘qilmagan support xabari.</p>
-        <button type="button" class="btn primary sm" data-go="support">Yordamga o‘tish</button>
+        <h3>${esc(t('support_new_title'))}</h3>
+        <p class="muted" style="margin-bottom:12px;">${t('support_new_body', { n: supportUnread })}</p>
+        <button type="button" class="btn primary sm" data-go="support">${esc(t('go_support'))}</button>
       </div>` : ''}
       <div class="card">
-        <h3>Tezkor harakatlar</h3>
-        <p class="muted" style="margin-bottom:12px;">Kerakli bo‘limga bir bosishda o‘ting.</p>
+        <h3>${esc(t('quick_actions'))}</h3>
+        <p class="muted" style="margin-bottom:12px;">${esc(t('quick_hint'))}</p>
         <div class="row-actions">
-          <button type="button" class="btn secondary sm" data-go="markets">Bozorlar</button>
-          <button type="button" class="btn secondary sm" data-go="shops">Do'konlar</button>
-          <button type="button" class="btn secondary sm" data-go="owners">Do'kon egalari</button>
-          <button type="button" class="btn secondary sm" data-go="support">Yordam</button>
-          <button type="button" class="btn secondary sm" data-go="report">Hisobot</button>
+          <button type="button" class="btn secondary sm" data-go="markets">${esc(t('nav_markets'))}</button>
+          <button type="button" class="btn secondary sm" data-go="shops">${esc(t('nav_shops'))}</button>
+          <button type="button" class="btn secondary sm" data-go="owners">${esc(t('nav_owners'))}</button>
+          <button type="button" class="btn secondary sm" data-go="support">${esc(t('nav_support'))}</button>
+          <button type="button" class="btn secondary sm" data-go="report">${esc(t('nav_report'))}</button>
         </div>
       </div>
       <div class="card">
-        <h3>Qisqa qo'llanma</h3>
-        <p class="muted">1. <strong>Bozor</strong> qo‘shing → 2. <strong>Do‘kon egasi</strong> yarating (login + parol) → 3. Egasi bot/WebApp orqali mahsulot qo‘shadi → 4. <strong>Hisobot</strong>da umumiy holatni kuzating.</p>
+        <h3>${esc(t('guide'))}</h3>
+        <p class="muted">${t('guide_text')}</p>
       </div>
     `;
     panel.querySelectorAll('[data-go]').forEach((btn) => {
@@ -233,16 +261,16 @@
     const s = report.summary;
     panel.innerHTML = `
       <div class="stats stats-5">
-        <div class="stat"><strong>${s.markets || 0}</strong><span>Bozor</span></div>
-        <div class="stat"><strong>${s.shops || 0}</strong><span>Do'kon</span></div>
-        <div class="stat"><strong>${s.products || 0}</strong><span>Mahsulot</span></div>
-        <div class="stat"><strong>${s.owners || 0}</strong><span>Egasi</span></div>
-        <div class="stat"><strong>${s.promo_products || 0}</strong><span>Aksiya</span></div>
+        <div class="stat"><strong>${s.markets || 0}</strong><span>${esc(t('market'))}</span></div>
+        <div class="stat"><strong>${s.shops || 0}</strong><span>${esc(t('shop'))}</span></div>
+        <div class="stat"><strong>${s.products || 0}</strong><span>${esc(t('product'))}</span></div>
+        <div class="stat"><strong>${s.owners || 0}</strong><span>${esc(t('owners'))}</span></div>
+        <div class="stat"><strong>${s.promo_products || 0}</strong><span>${esc(t('promo'))}</span></div>
       </div>
       <div class="card">
-        <h3>Bozorlar bo'yicha</h3>
+        <h3>${esc(t('report_by_market'))}</h3>
         <div class="table-wrap"><table>
-          <thead><tr><th>Bozor</th><th>Do'kon</th><th>Mahsulot</th></tr></thead>
+          <thead><tr><th>${esc(t('market'))}</th><th>${esc(t('shop'))}</th><th>${esc(t('product'))}</th></tr></thead>
           <tbody>
             ${(report.byMarket || []).map((m) => `
               <tr><td>${esc(m.name)}</td><td>${m.shops}</td><td>${m.products}</td></tr>
@@ -251,9 +279,9 @@
         </table></div>
       </div>
       <div class="card">
-        <h3>Top do'konlar (ko'rish bo'yicha)</h3>
+        <h3>${esc(t('top_shops'))}</h3>
         <div class="table-wrap"><table>
-          <thead><tr><th>Do'kon</th><th>Bozor</th><th>Ko'rish</th></tr></thead>
+          <thead><tr><th>${esc(t('shop'))}</th><th>${esc(t('market'))}</th><th>${esc(t('views'))}</th></tr></thead>
           <tbody>
             ${(report.topShops || []).map((s) => `
               <tr>
@@ -261,7 +289,7 @@
                 <td>${esc(s.market_name)}</td>
                 <td>${s.views_count || 0}</td>
               </tr>
-            `).join('') || '<tr><td colspan="3">Hali yo‘q</td></tr>'}
+            `).join('') || `<tr><td colspan="3">${esc(t('none_yet'))}</td></tr>`}
           </tbody>
         </table></div>
       </div>
@@ -276,23 +304,23 @@
     panel.innerHTML = `
       <div class="support-layout">
         <div class="card support-list-card">
-          <h3>Support so‘rovlar <span class="muted" id="support-live-dot" style="font-size:0.75rem;">· jonli</span></h3>
-          <p class="muted" style="margin-bottom:12px;">Foydalanuvchilar yozgan muammolar. Yangi xabarlar avtomatik keladi.</p>
+          <h3>${esc(t('support_title'))} <span class="muted" id="support-live-dot" style="font-size:0.75rem;">${esc(t('support_live'))}</span></h3>
+          <p class="muted" style="margin-bottom:12px;">${esc(t('support_hint'))}</p>
           <div id="support-thread-list" class="support-thread-list">
-            <p class="muted">Yuklanmoqda...</p>
+            <p class="muted">${esc(t('loading'))}</p>
           </div>
         </div>
         <div class="card support-chat-card">
           <div id="support-chat-head" class="support-chat-head">
-            <strong>Chat tanlang</strong>
-            <span class="muted">Chapdagi ro‘yxatdan foydalanuvchini tanlang</span>
+            <strong>${esc(t('pick_chat'))}</strong>
+            <span class="muted">${esc(t('pick_chat_hint'))}</span>
           </div>
           <div class="support-messages" id="support-messages">
-            <p class="muted text-center" style="padding:24px 8px;">Hali chat ochilmagan</p>
+            <p class="muted text-center" style="padding:24px 8px;">${esc(t('no_chat'))}</p>
           </div>
           <div class="support-compose" id="support-compose" hidden>
-            <input type="text" id="support-input" placeholder="Javob yozing..." maxlength="2000" />
-            <button type="button" class="btn primary" id="support-send">Yuborish</button>
+            <input type="text" id="support-input" placeholder="${esc(t('reply_ph'))}" maxlength="2000" />
+            <button type="button" class="btn primary" id="support-send">${esc(t('send'))}</button>
           </div>
         </div>
       </div>
@@ -316,7 +344,7 @@
       } else {
         msgEl.innerHTML = messages.map((m) => `
           <div class="support-bubble ${m.sender_role === 'admin' ? 'me' : 'them'}">
-            <div class="support-meta">${m.sender_role === 'admin' ? 'Siz (admin)' : 'Foydalanuvchi'}</div>
+            <div class="support-meta">${m.sender_role === 'admin' ? esc(t('you_admin')) : esc(t('user'))}</div>
             <div>${esc(m.body)}</div>
             <div class="support-time">${esc((m.created_at || '').slice(0, 16))}</div>
           </div>
@@ -459,32 +487,32 @@
     marketsCache = markets;
     panel.innerHTML = `
       <div class="card">
-        <h3>Yangi bozor qo'shish</h3>
+        <h3>${esc(t('new_market'))}</h3>
         <form id="market-form">
           <div class="grid-2">
-            <div class="field"><label>Nomi *</label><input name="name" required placeholder="Masalan: O'rikzor" /></div>
-            <div class="field"><label>Shahar</label><input name="city" value="Toshkent" /></div>
+            <div class="field"><label>${esc(t('name'))} *</label><input name="name" required placeholder="${esc(t('name_ph'))}" /></div>
+            <div class="field"><label>${esc(t('city'))}</label><input name="city" value="Toshkent" /></div>
           </div>
-          <div class="field"><label>Manzil</label><input name="address" placeholder="Manzil" /></div>
-          <div class="field"><label>Tavsif</label><textarea name="description" placeholder="Qisqa tavsif"></textarea></div>
-          <button class="btn primary" type="submit">Saqlash</button>
+          <div class="field"><label>${esc(t('address'))}</label><input name="address" placeholder="${esc(t('address'))}" /></div>
+          <div class="field"><label>${esc(t('description'))}</label><textarea name="description" placeholder="${esc(t('desc_ph'))}"></textarea></div>
+          <button class="btn primary" type="submit">${esc(t('save'))}</button>
           <p class="success" id="market-msg" hidden></p>
           <p class="error" id="market-err" hidden></p>
         </form>
       </div>
       <div class="card">
-        <h3>Barcha bozorlar</h3>
+        <h3>${esc(t('all_markets'))}</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Nomi</th><th>Shahar</th><th>Do'kon</th><th>Holat</th><th></th></tr></thead>
+            <thead><tr><th>${esc(t('name'))}</th><th>${esc(t('city'))}</th><th>${esc(t('shop'))}</th><th>${esc(t('status'))}</th><th></th></tr></thead>
             <tbody>
               ${markets.map((m) => `
                 <tr>
                   <td><strong>${esc(m.name)}</strong><div class="muted">${esc(m.address || '')}</div></td>
                   <td>${esc(m.city || '')}</td>
                   <td>${m.shops_count || 0}</td>
-                  <td>${m.is_active ? 'Faol' : 'O‘chiq'}</td>
-                  <td><button type="button" class="btn secondary sm" data-view-market="${m.id}">Ko'rish</button></td>
+                  <td>${m.is_active ? t('active') : t('inactive')}</td>
+                  <td><button type="button" class="btn secondary sm" data-view-market="${m.id}">${esc(t('view_btn'))}</button></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -596,7 +624,7 @@
     return (
       '<span class="pwd-wrap">' +
         '<code class="pwd-value" data-pwd-id="' + id + '">••••••••</code> ' +
-        '<button type="button" class="btn secondary sm btn-toggle-pwd" data-pwd-id="' + id + '">Ko\'rish</button>' +
+        '<button type="button" class="btn secondary sm btn-toggle-pwd" data-pwd-id="' + id + '">' + t('show') + '</button>' +
       '</span>'
     );
   }
@@ -625,11 +653,11 @@
       if (showing) {
         code.textContent = '••••••••';
         code.setAttribute('data-show', '0');
-        btn.textContent = "Ko'rish";
+        btn.textContent = t('show');
       } else {
         code.textContent = real;
         code.setAttribute('data-show', '1');
-        btn.textContent = 'Yashirish';
+        btn.textContent = t('hide');
       }
     });
   }
@@ -647,7 +675,7 @@
         <td>${esc(s.owner_name || '—')}<div class="muted">${esc(s.owner_login_phone || '')}</div></td>
         <td>${pwdToggleHtml(s.owner_password)}</td>
         <td>${s.products_count || 0}</td>
-        <td><button type="button" class="btn secondary sm" data-shop="${s.id}">Tafsilot</button></td>
+        <td><button type="button" class="btn secondary sm" data-shop="${s.id}">${t('detail')}</button></td>
       </tr>`;
   }
 
@@ -678,8 +706,8 @@
       if (countEl) {
         const marketName = marketId
           ? (marketSel.options[marketSel.selectedIndex]?.text || 'Bozor')
-          : 'Barcha bozorlar';
-        countEl.textContent = `${marketName}: ${shown} ta do'kon`;
+          : t('all_markets');
+        countEl.textContent = t('shops_count', { market: marketName, n: shown });
       }
       if (emptyEl) emptyEl.hidden = shown > 0;
     }
@@ -693,7 +721,7 @@
       btn.addEventListener('click', async () => {
         const box = root.querySelector('#shop-detail');
         if (!box) return;
-        box.innerHTML = '<p class="muted">Yuklanmoqda...</p>';
+        box.innerHTML = `<p class="muted">${t('loading')}</p>`;
         try {
           const { shop, products } = await api(`/shops/${btn.dataset.shop}`);
           box.innerHTML = shopDetailHtml(shop, products);
@@ -711,20 +739,19 @@
       <div class="card">
         <h3>${esc(title)}</h3>
         <p class="muted" style="margin-bottom:12px;">
-          Avval <strong>bozorni tanlang</strong> — shu bozorning barcha do'konlari chiqadi.
-          Keyin ixtiyoriy <strong>telefon</strong> yozib aniq do'konni toping.
+          ${t('shops_filter_hint')}
         </p>
         <div class="filter-bar">
           <div class="field" style="margin:0;">
-            <label>Bozor *</label>
+            <label>${esc(t('market_required'))}</label>
             <select id="shop-market-filter">
-              <option value="">— Barcha bozorlar —</option>
+              <option value="">${esc(t('all_markets_opt'))}</option>
               ${markets.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}
             </select>
           </div>
           <div class="field" style="margin:0;">
-            <label>Telefon qidiruv</label>
-            <input id="shop-phone-filter" type="search" placeholder="+99890... yoki do'kon nomi" />
+            <label>${esc(t('phone_search'))}</label>
+            <input id="shop-phone-filter" type="search" placeholder="${esc(t('phone_ph'))}" />
           </div>
         </div>
         <p class="muted" id="shops-count" style="margin:10px 0 8px;"></p>
@@ -732,12 +759,12 @@
           <table>
             <thead>
               <tr>
-                <th>Do'kon</th>
-                <th>Bozor</th>
-                <th>Telefon</th>
-                <th>Egasi / Login</th>
-                <th>Parol</th>
-                <th>Mahsulot</th>
+                <th>${esc(t('shop'))}</th>
+                <th>${esc(t('market'))}</th>
+                <th>${esc(t('phone_search'))}</th>
+                <th>${esc(t('owner_label'))}</th>
+                <th>${esc(t('password_label'))}</th>
+                <th>${esc(t('product'))}</th>
                 <th></th>
               </tr>
             </thead>
@@ -746,7 +773,7 @@
             </tbody>
           </table>
         </div>
-        <p class="muted" id="shops-empty" hidden style="margin-top:12px;">Bu bozor/telefon bo'yicha do'kon topilmadi.</p>
+        <p class="muted" id="shops-empty" hidden style="margin-top:12px;">${esc(t('shops_empty'))}</p>
         <div id="shop-detail"></div>
       </div>
     `;
@@ -755,7 +782,7 @@
   async function renderShops() {
     const [{ shops }, { markets }] = await Promise.all([api('/shops'), api('/markets')]);
     marketsCache = markets;
-    panel.innerHTML = shopsBrowserHtml(shops, markets, "Do'konlar");
+    panel.innerHTML = shopsBrowserHtml(shops, markets, t('shops_title'));
     bindShopTable(panel, shops);
   }
 
@@ -770,7 +797,7 @@
 
     panel.innerHTML = `
       <div class="card">
-        <h3>Yangi do'kon egasi</h3>
+        <h3>${esc(t('new_owner'))}</h3>
         <form id="owner-form">
           <div class="grid-2">
             <div class="field"><label>Ism *</label><input name="name" required placeholder="Ism Familiya" /></div>
@@ -892,8 +919,8 @@
       if (ownersCount) {
         const marketName = marketId
           ? (ownerMarket.options[ownerMarket.selectedIndex]?.text || 'Bozor')
-          : 'Barcha bozorlar';
-        ownersCount.textContent = `${marketName}: ${shown} ta do'kon egasi`;
+          : t('all_markets');
+        ownersCount.textContent = t('owners_count', { market: marketName, n: shown });
       }
       if (ownersEmpty) ownersEmpty.hidden = shown > 0;
     }
@@ -1017,6 +1044,8 @@
   }
 
   // boot
+  bindLangSwitch();
+  applyStaticI18n();
   if (token) {
     api('/me')
       .then(showApp)

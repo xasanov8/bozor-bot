@@ -7,25 +7,28 @@
   <title>Superadmin — Bozor Top</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/admin/admin.css?v=11" />
+  <link rel="stylesheet" href="/admin/admin.css?v=12" />
 </head>
 <body>
   <div id="login-view" class="login-wrap">
     <form class="login-card" id="login-form">
-      <div class="badge">SUPERADMIN</div>
-      <h1>Bozor boshqaruvi</h1>
-      <p class="muted">Faqat localhost. Parolni kiriting.</p>
-      <label>Parol</label>
-      <input type="password" id="login-password" placeholder="Superadmin paroli" autocomplete="current-password" required />
-      <button type="submit" class="btn primary">Kirish</button>
+      <div class="login-lang lang-switch" id="login-lang-switch">
+        <button type="button" class="lang-btn active" data-lang="uz">UZ</button>
+        <button type="button" class="lang-btn" data-lang="ru">RU</button>
+      </div>
+      <div class="badge" data-i18n="badge">SUPERADMIN</div>
+      <h1 data-i18n="login_h1">Bozor boshqaruvi</h1>
+      <p class="muted" data-i18n="login_hint">Faqat localhost. Parolni kiriting.</p>
+      <label data-i18n="password">Parol</label>
+      <input type="password" id="login-password" data-i18n-placeholder="password_ph" placeholder="Superadmin paroli" autocomplete="current-password" required />
+      <button type="submit" class="btn primary" data-i18n="login">Kirish</button>
       <p class="error" id="login-error" hidden></p>
     </form>
   </div>
 
   <div id="app-view" class="app hidden">
-    <!-- Mobile top bar -->
     <header class="mobile-bar" id="mobile-bar">
-      <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Menyu" aria-expanded="false" aria-controls="sidebar">
+      <button type="button" class="menu-toggle" id="menu-toggle" data-i18n-aria="menu" aria-label="Menyu" aria-expanded="false" aria-controls="sidebar">
         <span class="menu-bars" aria-hidden="true">
           <span></span><span></span><span></span>
         </span>
@@ -37,6 +40,10 @@
           <div class="brand-sub" id="mobile-tab-label">Dashboard</div>
         </div>
       </div>
+      <div class="lang-switch compact" id="mobile-lang-switch">
+        <button type="button" class="lang-btn active" data-lang="uz">UZ</button>
+        <button type="button" class="lang-btn" data-lang="ru">RU</button>
+      </div>
       <span class="pill compact">local</span>
     </header>
 
@@ -47,7 +54,7 @@
         <div class="brand-mark" aria-hidden="true">BT</div>
         <div class="brand-text">
           <div class="brand">Bozor Top</div>
-          <div class="brand-sub">Superadmin</div>
+          <div class="brand-sub" data-i18n="brand_sub">Superadmin</div>
         </div>
       </div>
 
@@ -56,22 +63,22 @@
           <div class="brand-mark" aria-hidden="true">BT</div>
           <div class="brand-text">
             <div class="brand">Bozor Top</div>
-            <div class="brand-sub">Menyu</div>
+            <div class="brand-sub" data-i18n="menu">Menyu</div>
           </div>
         </div>
-        <button type="button" class="icon-btn" id="menu-close" aria-label="Yopish">✕</button>
+        <button type="button" class="icon-btn" id="menu-close" data-i18n-aria="close" aria-label="Yopish">✕</button>
       </div>
 
       <div class="nav-section">
-        <div class="nav-label">Asosiy</div>
+        <div class="nav-label" data-i18n="section_main">Asosiy</div>
         <nav class="nav-list">
           <button type="button" class="nav active" data-tab="dashboard">
             <span class="nav-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5z"/></svg>
             </span>
             <span class="nav-copy">
-              <span class="nav-title">Dashboard</span>
-              <span class="nav-desc">Umumiy ko‘rinish</span>
+              <span class="nav-title" data-i18n="nav_dashboard">Dashboard</span>
+              <span class="nav-desc" data-i18n="nav_dashboard_d">Umumiy ko‘rinish</span>
             </span>
           </button>
           <button type="button" class="nav" data-tab="report">
@@ -79,8 +86,8 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 16V10"/><path d="M12 16V7"/><path d="M16 16v-4"/></svg>
             </span>
             <span class="nav-copy">
-              <span class="nav-title">Hisobot</span>
-              <span class="nav-desc">Statistika va top</span>
+              <span class="nav-title" data-i18n="nav_report">Hisobot</span>
+              <span class="nav-desc" data-i18n="nav_report_d">Statistika va top</span>
             </span>
           </button>
           <button type="button" class="nav" data-tab="support">
@@ -88,8 +95,8 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 9h8"/><path d="M8 13h5"/></svg>
             </span>
             <span class="nav-copy">
-              <span class="nav-title">Yordam</span>
-              <span class="nav-desc">Support chat</span>
+              <span class="nav-title" data-i18n="nav_support">Yordam</span>
+              <span class="nav-desc" data-i18n="nav_support_d">Support chat</span>
             </span>
             <em class="nav-badge hidden" id="support-nav-badge">0</em>
           </button>
@@ -97,15 +104,15 @@
       </div>
 
       <div class="nav-section">
-        <div class="nav-label">Boshqaruv</div>
+        <div class="nav-label" data-i18n="section_manage">Boshqaruv</div>
         <nav class="nav-list">
           <button type="button" class="nav" data-tab="markets">
             <span class="nav-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10h16l-1.2 9H5.2L4 10z"/><path d="M3 10 5.5 4h13L21 10"/><path d="M10 14v3"/><path d="M14 14v3"/></svg>
             </span>
             <span class="nav-copy">
-              <span class="nav-title">Bozorlar</span>
-              <span class="nav-desc">Bozor qo‘shish</span>
+              <span class="nav-title" data-i18n="nav_markets">Bozorlar</span>
+              <span class="nav-desc" data-i18n="nav_markets_d">Bozor qo‘shish</span>
             </span>
           </button>
           <button type="button" class="nav" data-tab="shops">
@@ -113,8 +120,8 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8h16v12H4z"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/><path d="M9 13h6"/></svg>
             </span>
             <span class="nav-copy">
-              <span class="nav-title">Do‘konlar</span>
-              <span class="nav-desc">Bozor bo‘yicha</span>
+              <span class="nav-title" data-i18n="nav_shops">Do‘konlar</span>
+              <span class="nav-desc" data-i18n="nav_shops_d">Bozor bo‘yicha</span>
             </span>
           </button>
           <button type="button" class="nav" data-tab="owners">
@@ -122,16 +129,20 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.5"/><path d="M5 19.5c1.2-3.2 3.7-4.8 7-4.8s5.8 1.6 7 4.8"/></svg>
             </span>
             <span class="nav-copy">
-              <span class="nav-title">Do‘kon egalari</span>
-              <span class="nav-desc">Login va parol</span>
+              <span class="nav-title" data-i18n="nav_owners">Do‘kon egalari</span>
+              <span class="nav-desc" data-i18n="nav_owners_d">Login va parol</span>
             </span>
           </button>
         </nav>
       </div>
 
       <div class="sidebar-foot">
-        <div class="sidebar-hint">Faqat localhost</div>
-        <button type="button" class="btn ghost logout" id="logout">Chiqish</button>
+        <div class="lang-switch sidebar-lang" id="sidebar-lang-switch">
+          <button type="button" class="lang-btn active" data-lang="uz">UZ</button>
+          <button type="button" class="lang-btn" data-lang="ru">RU</button>
+        </div>
+        <div class="sidebar-hint" data-i18n="localhost_only">Faqat localhost</div>
+        <button type="button" class="btn ghost logout" id="logout" data-i18n="logout">Chiqish</button>
       </div>
     </aside>
 
@@ -141,11 +152,18 @@
           <p class="top-kicker" id="page-kicker">Asosiy</p>
           <h2 id="page-title">Dashboard</h2>
         </div>
-        <span class="pill desktop-only">localhost only</span>
+        <div class="top-right">
+          <div class="lang-switch desktop-only" id="top-lang-switch">
+            <button type="button" class="lang-btn active" data-lang="uz">UZ</button>
+            <button type="button" class="lang-btn" data-lang="ru">RU</button>
+          </div>
+          <span class="pill desktop-only">localhost only</span>
+        </div>
       </header>
       <div id="panel"></div>
     </main>
   </div>
-  <script src="/admin/admin.js?v=11"></script>
+  <script src="/admin/i18n.js?v=1"></script>
+  <script src="/admin/admin.js?v=12"></script>
 </body>
 </html>

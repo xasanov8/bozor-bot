@@ -13,6 +13,35 @@
     } catch (_) { /* older clients */ }
   }
 
+  const t = (key, vars) => (window.I18N ? window.I18N.t(key, vars) : key);
+
+  function syncLangButtons() {
+    const lang = window.I18N?.getLang?.() || 'uz';
+    document.querySelectorAll('.lang-btn[data-lang]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.lang === lang);
+    });
+  }
+
+  function applyStaticI18n() {
+    window.I18N?.applyDom?.(document);
+    syncLangButtons();
+  }
+
+  function bindLangSwitch() {
+    document.querySelectorAll('.lang-btn[data-lang]').forEach((btn) => {
+      if (btn._langBound) return;
+      btn._langBound = true;
+      btn.addEventListener('click', () => {
+        const next = btn.dataset.lang;
+        if (!next || next === window.I18N?.getLang?.()) return;
+        window.I18N.setLang(next);
+        applyStaticI18n();
+        // joriy sahifani qayta chizish
+        if (typeof render === 'function') render();
+      });
+    });
+  }
+
   const $ = (sel, el = document) => el.querySelector(sel);
   const view = $('#view');
   const pageTitle = $('#page-title');
@@ -103,7 +132,7 @@
 
   function assertBuyerAction() {
     if (state.role === 'owner') {
-      toast("Do'kon egasi sevimli/savatdan foydalana olmaydi", 'error');
+      toast(t('owner_no_fav'), 'error');
       return false;
     }
     return true;
@@ -115,12 +144,12 @@
     if (isFavorite(id)) {
       state.favorites = state.favorites.filter((f) => Number(f.id) !== id);
       saveFavorites();
-      toast('Sevimlidan olib tashlandi');
+      toast(t('fav_removed'));
       return false;
     }
     state.favorites.unshift(productSnapshot(p, extra));
     saveFavorites();
-    toast('Sevimlilarga qo‘shildi', 'success');
+    toast(t('fav_added'), 'success');
     return true;
   }
 
@@ -134,7 +163,7 @@
       state.cart.unshift({ ...productSnapshot(p, extra), qty: 1 });
     }
     saveCart();
-    toast('Savatga qo‘shildi', 'success');
+    toast(t('cart_added'), 'success');
     haptic('light');
   }
 
@@ -183,17 +212,17 @@
 
   function showOwnerLoginForm(message) {
     setNav('owner');
-    setHeader("Do'kon egasi", 'Kirish', false);
+    setHeader(t('owner_login_title'), t('owner_login_sub'), false);
     applyRoleChrome();
     view.innerHTML = `
       <div class="form-card">
-        <h3>Do'kon egasi kirishi</h3>
-        <p class="text-secondary mb-16">${escapeHtml(message || "Superadmin bergan telefon va parolni kiriting.")}</p>
-        <div class="field"><label>Telefon</label><input id="own-phone" type="tel" placeholder="+99890..." autocomplete="tel" /></div>
-        <div class="field"><label>Parol</label><input id="own-pass" type="password" placeholder="Parol" autocomplete="current-password" /></div>
-        <button type="button" class="btn btn-primary btn-block" id="own-login">Kirish</button>
+        <h3>${escapeHtml(t('owner_login_h'))}</h3>
+        <p class="text-secondary mb-16">${escapeHtml(message || t('owner_login_hint'))}</p>
+        <div class="field"><label>${escapeHtml(t('phone'))}</label><input id="own-phone" type="tel" placeholder="+99890..." autocomplete="tel" /></div>
+        <div class="field"><label>${escapeHtml(t('password'))}</label><input id="own-pass" type="password" placeholder="${escapeHtml(t('password'))}" autocomplete="current-password" /></div>
+        <button type="button" class="btn btn-primary btn-block" id="own-login">${escapeHtml(t('login'))}</button>
         <p class="mt-8" id="own-login-err" style="color:#fca5a5;font-size:0.88rem;" hidden></p>
-        <button type="button" class="btn btn-ghost btn-block mt-12" id="back-role">← Rolni almashtirish</button>
+        <button type="button" class="btn btn-ghost btn-block mt-12" id="back-role">${escapeHtml(t('change_role'))}</button>
       </div>`;
     $('#back-role')?.addEventListener('click', () => {
       clearOwnerSession();
@@ -215,7 +244,7 @@
         state.ownerToken = data.token;
         localStorage.setItem(OWNER_TOKEN_KEY, data.token);
         setRole('owner');
-        toast('Kirildi', 'success');
+        toast(t('logged_in'), 'success');
         navigate('owner', {}, { push: false });
       } catch (ex) {
         errEl.textContent = ex.message;
@@ -313,7 +342,7 @@
         total > 0 &&
         state.route?.name !== 'support'
       ) {
-        toast('Yordam: yangi javob keldi', 'success');
+        toast(t('support_new'), 'success');
       }
       lastSupportUnreadSnap = snap;
     } catch (_) {
@@ -363,7 +392,8 @@
 
   function formatPrice(n) {
     const num = Number(n) || 0;
-    return new Intl.NumberFormat('uz-UZ').format(num) + " so'm";
+    const locale = window.I18N?.getLang?.() === 'ru' ? 'ru-RU' : 'uz-UZ';
+    return new Intl.NumberFormat(locale).format(num) + ' ' + t('som');
   }
 
   function initials(name) {
@@ -514,14 +544,14 @@
         navigate('search', { marketId: state.selectedMarketId }, { push: false });
       } else if (route === 'favorites') {
         if (state.role === 'owner') {
-          toast("Sevimli faqat xaridor uchun", 'error');
+          toast(t('fav_buyer_only'), 'error');
           return;
         }
         if (state.role !== 'buyer') setRole('buyer');
         navigate('favorites', {}, { push: false });
       } else if (route === 'cart') {
         if (state.role === 'owner') {
-          toast("Savat faqat xaridor uchun", 'error');
+          toast(t('cart_buyer_only'), 'error');
           return;
         }
         if (state.role !== 'buyer') setRole('buyer');
@@ -570,7 +600,7 @@
     const seq = ++renderSeq;
     const { name, params } = state.route;
     setChatMode(false);
-    view.innerHTML = `<div class="loading"><div class="spinner"></div><span>Yuklanmoqda...</span></div>`;
+    view.innerHTML = `<div class="loading"><div class="spinner"></div><span>${t('loading')}</span></div>`;
 
     try {
       if (name === 'role') await renderRoleGate();
@@ -596,7 +626,7 @@
       view.innerHTML = `
         <div class="results-empty">
           <div class="empty-icon">!</div>
-          <h4>Xatolik</h4>
+          <h4>${t('error')}</h4>
           <p>${escapeHtml(err.message)}</p>
           <button type="button" class="btn btn-secondary mt-16" id="retry-btn">Qayta urinish</button>
         </div>`;
@@ -608,22 +638,22 @@
   }
 
   async function renderRoleGate() {
-    setHeader('Bozor Top', 'Rolingizni tanlang', false);
+    setHeader(t('role_title'), t('role_sub'), false);
     applyRoleChrome();
     view.innerHTML = `
       <section class="role-gate">
         <div class="role-hero">
-          <div class="hero-kicker">Xush kelibsiz</div>
-          <h2>Siz kimsiz?</h2>
-          <p>Davom etish uchun rolingizni tanlang</p>
+          <div class="hero-kicker">${escapeHtml(t('role_title'))}</div>
+          <h2>${escapeHtml(t('role_sub'))}</h2>
+          <p>${escapeHtml(t('role_pick'))}</p>
         </div>
         <button type="button" class="role-card buyer" id="role-buyer">
           <div class="role-icon" aria-hidden="true">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.7 13.4a2 2 0 002 1.6h9.7a2 2 0 002-1.6L23 6H6"/></svg>
           </div>
           <div class="role-text">
-            <h3>Xaridorman</h3>
-            <p>Bozordan mahsulot qidirish, do'kon va narxlarni ko'rish</p>
+            <h3>${escapeHtml(t('role_buyer'))}</h3>
+            <p>${escapeHtml(t('role_buyer_desc'))}</p>
           </div>
           ${iconChevron()}
         </button>
@@ -632,8 +662,8 @@
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l1-4h16l1 4"/><path d="M4 9v11h16V9"/><path d="M9 13h6"/></svg>
           </div>
           <div class="role-text">
-            <h3>Do'kon egasiman</h3>
-            <p>Telefon va parol bilan kirish, mahsulotlarni boshqarish</p>
+            <h3>${escapeHtml(t('role_owner'))}</h3>
+            <p>${escapeHtml(t('role_owner_desc'))}</p>
           </div>
           ${iconChevron()}
         </button>
@@ -683,19 +713,19 @@
       return navigate('role', {}, { push: false });
     }
     setNav('home');
-    setHeader('Bozor Top', 'Katta bozorlarda qidirish', false);
+    setHeader(t('home_title'), t('home_sub'), false);
     applyRoleChrome();
     const markets = await loadMarkets(true);
 
     view.innerHTML = `
       <section class="hero">
-        <div class="hero-kicker">Tezkor qidiruv</div>
-        <h2>Nima kerak? Bozordan topamiz</h2>
-        <p>Bozorni tanlang, kerakli narsani yozing — qaysi do'konlarda borligi, narxi va telefoni chiqadi.</p>
+        <div class="hero-kicker">${escapeHtml(t('search_title'))}</div>
+        <h2>${escapeHtml(t('home_hero'))}</h2>
+        <p>${escapeHtml(t('home_hero_sub'))}</p>
         <div class="stats-row">
           <div class="stat">
             <strong>${markets.length}</strong>
-            <span>Katta bozor</span>
+            <span>${escapeHtml(t('market_big'))}</span>
           </div>
           <div class="stat">
             <strong>${markets.reduce((s, m) => s + (m.shops_count || 0), 0)}</strong>
@@ -762,7 +792,7 @@
     const data = await api(`/markets/${id}`);
     const { market, shops } = data;
     state.selectedMarketId = market.id;
-    setHeader(marketLabel(market.name), market.city || 'Katta bozor', true);
+    setHeader(marketLabel(market.name), market.city || t('market_big'), true);
 
     const popular = ["olma", "guruch", "non", "go'sht", "pomidor", "choy"];
 
@@ -866,7 +896,7 @@
     const markets = await loadMarkets();
     const mid = Number(marketId) || state.selectedMarketId || markets[0]?.id;
     state.selectedMarketId = mid;
-    setHeader('Qidiruv', 'Mahsulot qidirish', true);
+    setHeader(t('search_title'), t('search_sub'), true);
 
     view.innerHTML = `
       <select class="market-select" id="search-market">
@@ -1051,7 +1081,7 @@
     container.querySelectorAll('[data-chat-shop]').forEach((el) => {
       el.addEventListener('click', () => {
         if (state.role === 'owner') {
-          toast("Chat faqat xaridor uchun", 'error');
+          toast(t('chat_buyer_only'), 'error');
           return;
         }
         navigate('chat', { shopId: Number(el.dataset.chatShop), shopName: el.dataset.chatName });
@@ -1198,7 +1228,7 @@
     $('#add-cart')?.addEventListener('click', () => addToCart(cartProduct, meta));
     $('#toggle-fav')?.addEventListener('click', () => {
       const on = toggleFavorite(cartProduct, meta);
-      $('#toggle-fav').textContent = on ? 'Sevimlidan olib tashlash' : "Sevimlilarga qo'shish";
+      $('#toggle-fav').textContent = on ? t('remove_fav') : t('add_fav');
     });
     $('#open-chat')?.addEventListener('click', () => {
       navigate('chat', { shopId: product.shop_id, shopName: product.shop_name });
@@ -1212,14 +1242,14 @@
 
   async function renderFavorites() {
     if (state.role === 'owner') {
-      toast("Do'kon egasi sevimlidan foydalana olmaydi", 'error');
+      toast(t('owner_no_fav'), 'error');
       return navigate('owner', {}, { push: false });
     }
     if (state.role !== 'buyer') return navigate('role', {}, { push: false });
     setNav('favorites');
     // Ochilganda serverdan yangilash
     await syncFavoritesAndCartFromServer();
-    setHeader('Sevimlilar', `${state.favorites.length} ta`, false);
+    setHeader(t('favorites'), t('pieces_n', { n: state.favorites.length }), false);
     applyRoleChrome();
 
     if (!state.favorites.length) {
@@ -1271,14 +1301,14 @@
 
   async function renderCart() {
     if (state.role === 'owner') {
-      toast("Do'kon egasi savatdan foydalana olmaydi", 'error');
+      toast(t('owner_no_fav'), 'error');
       return navigate('owner', {}, { push: false });
     }
     if (state.role !== 'buyer') return navigate('role', {}, { push: false });
     setNav('cart');
     // Ochilganda serverdan yangilash
     await syncFavoritesAndCartFromServer();
-    setHeader('Savat', `${state.cart.length} xil`, false);
+    setHeader(t('cart'), `${state.cart.length} ${t('pieces')}`, false);
     applyRoleChrome();
 
     if (!state.cart.length) {
@@ -1360,7 +1390,7 @@
       return navigate('role', {}, { push: false });
     }
     setNav('owner');
-    setHeader("Mening do'konim", "Do'kon va mahsulotlar", false);
+    setHeader(t('my_shop'), t('my_shop_sub'), false);
     applyRoleChrome();
 
     // Token yo'q = chiqilgan — Telegram orqali avtomatik kirish YO'Q
@@ -1429,7 +1459,7 @@
     $('#owner-logout')?.addEventListener('click', () => {
       clearOwnerSession();
       setRole(null);
-      toast('Chiqildi — qayta kirish uchun telefon va parol kerak');
+      toast(t('logged_out'));
       navigate('role', {}, { push: false });
     });
     view.querySelectorAll('[data-manage]').forEach((el) => {
@@ -1454,7 +1484,7 @@
               work_close: $(`#close-${id}`).value,
             },
           });
-          toast('Ish vaqti saqlandi', 'success');
+          toast(t('hours_saved'), 'success');
           navigate('owner', {}, { push: false });
         } catch (ex) {
           toast(ex.message, 'error');
@@ -1526,16 +1556,16 @@
       const fd = new FormData(form);
       const btn = form.querySelector('[type=submit]');
       btn.disabled = true;
-      btn.textContent = 'Saqlanmoqda...';
+      btn.textContent = t('saving');
       try {
         await api('/shops', { method: 'POST', body: fd });
         haptic('medium');
-        toast("Do'kon yaratildi", 'success');
+        toast(t('shop_created'), 'success');
         navigate('owner', {}, { push: false });
       } catch (err) {
         toast(err.message, 'error');
         btn.disabled = false;
-        btn.textContent = 'Saqlash';
+        btn.textContent = t('save');
       }
     });
   }
@@ -1627,7 +1657,7 @@
         if (!confirm("Mahsulotni o'chirasizmi?")) return;
         try {
           await api(`/products/${el.dataset.del}`, { method: 'DELETE' });
-          toast("O'chirildi", 'success');
+          toast(t('deleted'), 'success');
           renderOwnerShop(shopId);
         } catch (err) {
           toast(err.message, 'error');
@@ -1713,7 +1743,7 @@
       }
       const btn = form.querySelector('[type=submit]');
       btn.disabled = true;
-      btn.textContent = 'Saqlanmoqda...';
+      btn.textContent = t('saving');
       try {
         if (productId) {
           await api(`/products/${productId}`, { method: 'PATCH', body: fd });
@@ -1721,12 +1751,12 @@
           await api('/products', { method: 'POST', body: fd });
         }
         haptic('medium');
-        toast('Saqlandi', 'success');
+        toast(t('saved'), 'success');
         navigate('owner-shop', { id: shopId }, { push: false });
       } catch (err) {
         toast(err.message, 'error');
         btn.disabled = false;
-        btn.textContent = 'Saqlash';
+        btn.textContent = t('save');
       }
     });
   }
@@ -1736,7 +1766,7 @@
   async function renderSupport() {
     if (!state.role) return navigate('role', {}, { push: false });
     setNav('support');
-    setHeader('Yordam', 'Superadmin bilan jonli chat', false);
+    setHeader(t('support_title'), t('support_sub'), false);
     applyRoleChrome();
     view.innerHTML = `<div class="loading"><div class="spinner"></div></div>`;
 
@@ -1749,7 +1779,7 @@
       thread = data.thread;
       messages = data.messages || [];
     } catch (err) {
-      view.innerHTML = `<div class="results-empty"><h4>Yordam ochilmadi</h4><p>${escapeHtml(err.message)}</p></div>`;
+      view.innerHTML = `<div class="results-empty"><h4>${t('support_fail')}</h4><p>${escapeHtml(err.message)}</p></div>`;
       return;
     }
 
@@ -1765,20 +1795,20 @@
       setChatMode(true);
       view.innerHTML = `
         <div class="chat-layout">
-          <p class="chat-hint">Muammo yoki savolingizni yozing. Superadmin javobi <strong>jonli</strong> keladi.</p>
+          <p class="chat-hint">${t('support_hint')}</p>
           <div class="chat-box">
             <div class="chat-messages" id="support-messages">
               ${messages.length ? messages.map((m) => `
                 <div class="chat-bubble ${m.sender_role === 'user' ? 'me' : 'them'}" data-mid="${m.id}">
-                  <div class="chat-meta">${m.sender_role === 'user' ? 'Siz' : 'Support'}</div>
+                  <div class="chat-meta">${m.sender_role === 'user' ? t('you') : t('support_role')}</div>
                   <div>${escapeHtml(m.body)}</div>
                   <div class="chat-time">${escapeHtml((m.created_at || '').slice(11, 16))}</div>
                 </div>
-              `).join('') : '<p class="text-muted text-center">Birinchi xabaringizni yozing — superadmin darhol ko‘radi</p>'}
+              `).join('') : '<p class="text-muted text-center">${t('support_empty')}</p>'}
             </div>
             <div class="chat-input-row">
-              <input type="text" id="support-input" placeholder="Muammoingizni yozing..." maxlength="2000" value="${escapeHtml(draft)}" autocomplete="off" />
-              <button type="button" class="btn btn-primary" id="support-send">Yuborish</button>
+              <input type="text" id="support-input" placeholder="${t('support_ph')}" maxlength="2000" value="${escapeHtml(draft)}" autocomplete="off" />
+              <button type="button" class="btn btn-primary" id="support-send">${t('send')}</button>
             </div>
           </div>
         </div>
@@ -1845,7 +1875,7 @@
   async function renderChatsList() {
     if (state.role !== 'buyer') return navigate('role', {}, { push: false });
     setNav('home');
-    setHeader('Chatlar', "Do'konlar bilan yozishma", true);
+    setHeader(t('chats'), t('chat_live'), true);
     applyRoleChrome();
     let threads = [];
     try {
@@ -1922,15 +1952,15 @@
             <div class="chat-messages" id="chat-messages">
               ${messages.length ? messages.map((m) => `
                 <div class="chat-bubble ${m.sender_role === 'buyer' ? 'me' : 'them'}" data-mid="${m.id}">
-                  <div class="chat-meta">${m.sender_role === 'buyer' ? 'Siz' : "Do'kon"}</div>
+                  <div class="chat-meta">${m.sender_role === 'buyer' ? t('you') : t('shop_role')}</div>
                   <div>${escapeHtml(m.body)}</div>
                   <div class="chat-time">${escapeHtml((m.created_at || '').slice(11, 16))}</div>
                 </div>
-              `).join('') : '<p class="text-muted text-center">Xabar yozing — do\'kon egasi darhol ko\'radi</p>'}
+              `).join('') : '<p class="text-muted text-center">${t('chat_empty')}</p>'}
             </div>
             <div class="chat-input-row">
-              <input type="text" id="chat-input" placeholder="Xabar..." maxlength="1000" value="${escapeHtml(draft)}" autocomplete="off" />
-              <button type="button" class="btn btn-primary" id="chat-send">Yuborish</button>
+              <input type="text" id="chat-input" placeholder="${t('chat_ph')}" maxlength="1000" value="${escapeHtml(draft)}" autocomplete="off" />
+              <button type="button" class="btn btn-primary" id="chat-send">${t('send')}</button>
             </div>
           </div>
         </div>
@@ -2004,7 +2034,7 @@
   async function renderOwnerChatsList() {
     if (!state.ownerToken) return navigate('owner', {}, { push: false });
     setNav('owner');
-    setHeader('Chatlar', 'Xaridorlar', true);
+    setHeader(t('owner_chats'), t('owner_chats_sub'), true);
     applyRoleChrome();
     let threads = [];
     try {
@@ -2040,7 +2070,7 @@
   async function renderOwnerChat(threadId) {
     if (!state.ownerToken) return navigate('owner', {}, { push: false });
     setNav('owner');
-    setHeader('Chat', 'Jonli yozishma', true);
+    setHeader(t('chats'), t('live_chat'), true);
     applyRoleChrome();
     let thread;
     let messages = [];
@@ -2054,7 +2084,7 @@
       return;
     }
     lastMsgId = messages.length ? messages[messages.length - 1].id : 0;
-    setHeader(thread.buyer_name || 'Xaridor', thread.shop_name, true);
+    setHeader(thread.buyer_name || t('buyer'), thread.shop_name, true);
 
     function paint(keepInput = false) {
       const draft = keepInput ? ($('#ochat-input')?.value || '') : '';
@@ -2070,15 +2100,15 @@
             <div class="chat-messages" id="ochat-messages">
               ${messages.map((m) => `
                 <div class="chat-bubble ${m.sender_role === 'owner' ? 'me' : 'them'}">
-                  <div class="chat-meta">${m.sender_role === 'owner' ? 'Siz' : 'Xaridor'}</div>
+                  <div class="chat-meta">${m.sender_role === 'owner' ? t('you') : t('buyer')}</div>
                   <div>${escapeHtml(m.body)}</div>
                   <div class="chat-time">${escapeHtml((m.created_at || '').slice(11, 16))}</div>
                 </div>
               `).join('')}
             </div>
             <div class="chat-input-row">
-              <input type="text" id="ochat-input" placeholder="Javob..." maxlength="1000" value="${escapeHtml(draft)}" autocomplete="off" />
-              <button type="button" class="btn btn-primary" id="ochat-send">Yuborish</button>
+              <input type="text" id="ochat-input" placeholder="${t('reply_ph')}" maxlength="1000" value="${escapeHtml(draft)}" autocomplete="off" />
+              <button type="button" class="btn btn-primary" id="ochat-send">${t('send')}</button>
             </div>
           </div>
         </div>
@@ -2337,6 +2367,8 @@
       }
     }
 
+    bindLangSwitch();
+    applyStaticI18n();
     startLiveUpdates();
     startUnreadPolling();
     updateCartBadge();

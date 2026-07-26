@@ -1281,6 +1281,37 @@ img {
 }
 .mb-12 { margin-bottom: 12px; }
 
+/* Language switcher */
+.lang-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  flex-shrink: 0;
+}
+.lang-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 6px 8px;
+  border-radius: 9px;
+  cursor: pointer;
+  min-width: 36px;
+  min-height: 32px;
+}
+.lang-btn.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+.lang-btn:active { opacity: 0.85; }
+
 .chat-icon-btn {
   position: relative;
 }
