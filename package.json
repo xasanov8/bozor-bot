@@ -1,0 +1,23 @@
+{
+  "name": "bozor-bot",
+  "version": "1.0.0",
+  "description": "Katta bozorlar uchun Telegram bot va WebApp — qidiruv, do'konlar, mahsulotlar",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "seed": "node server/seed.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1",
+    "telegraf": "^4.16.3",
+    "uuid": "^11.0.3"
+  }
+}
