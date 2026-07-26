@@ -20,14 +20,231 @@
   const btnBack = $('#btn-back');
   const toastEl = $('#toast');
 
+  const OWNER_TOKEN_KEY = 'bozor_owner_token';
+  const ROLE_KEY = 'bozor_session_role'; // session — har WebApp ochilganda qayta so'raladi
+  const FAV_KEY = 'bozor_favorites';
+  const CART_KEY = 'bozor_cart';
+
   const state = {
     markets: [],
     selectedMarketId: null,
-    route: { name: 'home', params: {} },
+    route: { name: 'role', params: {} },
     history: [],
     me: null,
     searchQuery: '',
+    ownerToken: localStorage.getItem(OWNER_TOKEN_KEY) || '',
+    role: sessionStorage.getItem(ROLE_KEY) || null, // 'buyer' | 'owner'
+    favorites: [],
+    cart: [],
   };
+
+  function loadStore() {
+    try {
+      state.favorites = JSON.parse(localStorage.getItem(FAV_KEY) || '[]');
+      if (!Array.isArray(state.favorites)) state.favorites = [];
+    } catch {
+      state.favorites = [];
+    }
+    try {
+      state.cart = JSON.parse(localStorage.getItem(CART_KEY) || '[]');
+      if (!Array.isArray(state.cart)) state.cart = [];
+    } catch {
+      state.cart = [];
+    }
+  }
+  loadStore();
+
+  function saveFavorites() {
+    localStorage.setItem(FAV_KEY, JSON.stringify(state.favorites));
+  }
+  function saveCart() {
+    localStorage.setItem(CART_KEY, JSON.stringify(state.cart));
+    updateCartBadge();
+  }
+
+  function updateCartBadge() {
+    const badge = $('#cart-badge');
+    if (!badge) return;
+    const n = state.cart.reduce((s, i) => s + (i.qty || 1), 0);
+    badge.textContent = String(n);
+    badge.classList.toggle('hidden', n === 0);
+  }
+
+  function isFavorite(productId) {
+    return state.favorites.some((f) => Number(f.id) === Number(productId));
+  }
+
+  function productSnapshot(p, extra = {}) {
+    return {
+      id: p.id,
+      name: p.name,
+      price: p.price,
+      unit: p.unit || 'dona',
+      image_url: p.image_url || null,
+      shop_id: p.shop_id || extra.shop_id || null,
+      shop_name: p.shop_name || extra.shop_name || '',
+      shop_phone: p.shop_phone || extra.shop_phone || '',
+      shop_address: p.shop_address || extra.shop_address || '',
+    };
+  }
+
+  function toggleFavorite(p, extra = {}) {
+    const id = Number(p.id);
+    if (isFavorite(id)) {
+      state.favorites = state.favorites.filter((f) => Number(f.id) !== id);
+      saveFavorites();
+      toast('Sevimlidan olib tashlandi');
+      return false;
+    }
+    state.favorites.unshift(productSnapshot(p, extra));
+    saveFavorites();
+    toast('Sevimlilarga qo‘shildi', 'success');
+    return true;
+  }
+
+  function addToCart(p, extra = {}) {
+    const id = Number(p.id);
+    const existing = state.cart.find((c) => Number(c.id) === id);
+    if (existing) {
+      existing.qty = (existing.qty || 1) + 1;
+    } else {
+      state.cart.unshift({ ...productSnapshot(p, extra), qty: 1 });
+    }
+    saveCart();
+    toast('Savatga qo‘shildi', 'success');
+    haptic('light');
+  }
+
+  function setCartQty(productId, qty) {
+    const item = state.cart.find((c) => Number(c.id) === Number(productId));
+    if (!item) return;
+    item.qty = Math.max(1, Number(qty) || 1);
+    saveCart();
+  }
+
+  function removeFromCart(productId) {
+    state.cart = state.cart.filter((c) => Number(c.id) !== Number(productId));
+    saveCart();
+  }
+
+  function marketLabel(name) {
+    const n = String(name || '').trim();
+    if (!n) return '';
+    if (/bozori$/i.test(n)) return n;
+    return `${n.replace(/\s*bozor$/i, '').trim()} bozori`;
+  }
+
+  function favBtnHtml(productId) {
+    const on = isFavorite(productId);
+    return `<button type="button" class="icon-chip ${on ? 'on' : ''}" data-fav="${productId}" aria-label="Sevimli">${on ? '♥' : '♡'}</button>`;
+  }
+
+  function cartBtnHtml(productId) {
+    return `<button type="button" class="icon-chip cart" data-cart="${productId}" aria-label="Savat">+</button>`;
+  }
+
+  function setRole(role) {
+    state.role = role;
+    if (role) sessionStorage.setItem(ROLE_KEY, role);
+    else sessionStorage.removeItem(ROLE_KEY);
+    applyRoleChrome();
+  }
+
+  /** Chiqish: token o'chadi — qayta telefon/parol majburiy */
+  function clearOwnerSession() {
+    state.ownerToken = '';
+    state.me = null;
+    localStorage.removeItem(OWNER_TOKEN_KEY);
+    sessionStorage.removeItem(OWNER_TOKEN_KEY);
+  }
+
+  function showOwnerLoginForm(message) {
+    setNav('owner');
+    setHeader("Do'kon egasi", 'Kirish', false);
+    applyRoleChrome();
+    view.innerHTML = `
+      <div class="form-card">
+        <h3>Do'kon egasi kirishi</h3>
+        <p class="text-secondary mb-16">${escapeHtml(message || "Superadmin bergan telefon va parolni kiriting.")}</p>
+        <div class="field"><label>Telefon</label><input id="own-phone" type="tel" placeholder="+99890..." autocomplete="tel" /></div>
+        <div class="field"><label>Parol</label><input id="own-pass" type="password" placeholder="Parol" autocomplete="current-password" /></div>
+        <button type="button" class="btn btn-primary btn-block" id="own-login">Kirish</button>
+        <p class="mt-8" id="own-login-err" style="color:#fca5a5;font-size:0.88rem;" hidden></p>
+        <button type="button" class="btn btn-ghost btn-block mt-12" id="back-role">← Rolni almashtirish</button>
+      </div>`;
+    $('#back-role')?.addEventListener('click', () => {
+      clearOwnerSession();
+      setRole(null);
+      navigate('role', {}, { push: false });
+    });
+    $('#own-login')?.addEventListener('click', async () => {
+      const errEl = $('#own-login-err');
+      errEl.hidden = true;
+      try {
+        const body = {
+          phone: $('#own-phone').value,
+          password: $('#own-pass').value,
+        };
+        if (tg?.initDataUnsafe?.user?.id) {
+          body.telegramId = String(tg.initDataUnsafe.user.id);
+        }
+        const data = await api('/owner/login', { method: 'POST', body });
+        state.ownerToken = data.token;
+        localStorage.setItem(OWNER_TOKEN_KEY, data.token);
+        setRole('owner');
+        toast('Kirildi', 'success');
+        navigate('owner', {}, { push: false });
+      } catch (ex) {
+        errEl.textContent = ex.message;
+        errEl.hidden = false;
+      }
+    });
+  }
+
+  function applyRoleChrome() {
+    const nav = $('#bottom-nav');
+    if (!nav) return;
+    if (!state.role || state.route?.name === 'role') {
+      nav.classList.add('hidden');
+      return;
+    }
+    nav.classList.remove('hidden');
+    nav.querySelectorAll('.nav-item').forEach((el) => {
+      const roles = (el.dataset.roles || '').split(',').map((s) => s.trim()).filter(Boolean);
+      if (!roles.length) {
+        el.classList.remove('hidden');
+        return;
+      }
+      el.classList.toggle('hidden', !roles.includes(state.role));
+    });
+    updateCartBadge();
+  }
+
+  function captureOwnerTokenFromUrl() {
+    try {
+      const hash = location.hash || '';
+      // #/owner?token=...
+      const qIndex = hash.indexOf('?');
+      if (qIndex !== -1) {
+        const params = new URLSearchParams(hash.slice(qIndex + 1));
+        const t = params.get('token');
+        if (t) {
+          state.ownerToken = t;
+          localStorage.setItem(OWNER_TOKEN_KEY, t);
+          // clean token from address bar
+          const clean = hash.slice(0, qIndex);
+          history.replaceState(null, '', `${location.pathname}${location.search}${clean}`);
+        }
+      }
+      const searchParams = new URLSearchParams(location.search);
+      const t2 = searchParams.get('token');
+      if (t2) {
+        state.ownerToken = t2;
+        localStorage.setItem(OWNER_TOKEN_KEY, t2);
+      }
+    } catch (_) {}
+  }
+  captureOwnerTokenFromUrl();
 
   // ——— Utils ———
 
@@ -70,22 +287,42 @@
     const headers = {};
     if (tg?.initData) {
       headers['X-Telegram-Init-Data'] = tg.initData;
-    } else if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+    } else if (
+      (location.hostname === 'localhost' || location.hostname === '127.0.0.1') &&
+      !state.ownerToken
+    ) {
       headers['X-Dev-User'] = '100001';
+    }
+    if (state.ownerToken) {
+      headers.Authorization = `Bearer ${state.ownerToken}`;
+      headers['X-Owner-Token'] = state.ownerToken;
     }
     return headers;
   }
 
   async function api(path, options = {}) {
     const opts = { ...options };
-    opts.headers = { ...initDataHeader(), ...(opts.headers || {}) };
+    opts.headers = {
+      // ngrok free interstitial sahifasini o'tkazib yuborish
+      'ngrok-skip-browser-warning': '1',
+      Accept: 'application/json',
+      ...initDataHeader(),
+      ...(opts.headers || {}),
+    };
     if (opts.body && !(opts.body instanceof FormData)) {
       opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify(opts.body);
     }
     const res = await fetch(`/api${path}`, opts);
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'So\'rov muvaffaqiyatsiz');
+    const text = await res.text();
+    let data = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      // HTML (ngrok warning) yoki boshqa non-JSON
+      throw new Error("Server javobi noto'g'ri. Qayta urinib ko'ring.");
+    }
+    if (!res.ok) throw new Error(data.error || "So'rov muvaffaqiyatsiz");
     return data;
   }
 
@@ -131,12 +368,14 @@
     });
   }
 
+  let renderSeq = 0;
+
   function navigate(name, params = {}, { push = true } = {}) {
     if (push && state.route.name) {
       state.history.push({ ...state.route });
     }
     state.route = { name, params };
-    render();
+    return render();
   }
 
   function goBack() {
@@ -144,10 +383,9 @@
     const prev = state.history.pop();
     if (prev) {
       state.route = prev;
-      render();
-    } else {
-      navigate('home', {}, { push: false });
+      return render();
     }
+    return navigate('home', {}, { push: false });
   }
 
   btnBack.addEventListener('click', goBack);
@@ -158,44 +396,69 @@
       const route = btn.dataset.route;
       state.history = [];
       if (route === 'search') {
+        if (state.role !== 'buyer') setRole('buyer');
         navigate('search', { marketId: state.selectedMarketId }, { push: false });
+      } else if (route === 'favorites') {
+        if (state.role !== 'buyer') setRole('buyer');
+        navigate('favorites', {}, { push: false });
+      } else if (route === 'cart') {
+        if (state.role !== 'buyer') setRole('buyer');
+        navigate('cart', {}, { push: false });
       } else if (route === 'owner') {
+        if (state.role !== 'owner') setRole('owner');
         navigate('owner', {}, { push: false });
       } else {
+        if (state.role !== 'buyer') setRole('buyer');
         navigate('home', {}, { push: false });
       }
     });
   });
 
-  // Hash routing for bot deep links
-  function applyHash() {
-    const hash = location.hash.replace(/^#\/?/, '');
-    if (hash === 'owner') {
+  // Hash routing for bot deep links. true = marshrut tanlandi
+  function routeFromHash() {
+    captureOwnerTokenFromUrl();
+    const raw = (location.hash || '').replace(/^#\/?/, '').trim();
+    const hash = raw.split('?')[0];
+    if (!hash) return false;
+    if (hash === 'owner' || hash.startsWith('owner')) {
+      setRole('owner');
       navigate('owner', {}, { push: false });
-    } else if (hash.startsWith('market/')) {
-      const id = Number(hash.split('/')[1]);
-      if (id) navigate('market', { id }, { push: false });
+      return true;
     }
+    if (hash.startsWith('market/')) {
+      const id = Number(hash.split('/')[1]);
+      if (id) {
+        setRole('buyer');
+        navigate('market', { id }, { push: false });
+        return true;
+      }
+    }
+    return false;
   }
 
   // ——— Views ———
 
   async function render() {
+    const seq = ++renderSeq;
     const { name, params } = state.route;
     view.innerHTML = `<div class="loading"><div class="spinner"></div><span>Yuklanmoqda...</span></div>`;
 
     try {
-      if (name === 'home') await renderHome();
+      if (name === 'role') await renderRoleGate();
+      else if (name === 'home') await renderHome();
       else if (name === 'market') await renderMarket(params.id);
       else if (name === 'search') await renderSearch(params.marketId, params.q);
       else if (name === 'shop') await renderShop(params.id);
       else if (name === 'product') await renderProduct(params.id);
+      else if (name === 'favorites') await renderFavorites();
+      else if (name === 'cart') await renderCart();
       else if (name === 'owner') await renderOwner();
       else if (name === 'owner-create') await renderOwnerCreate();
       else if (name === 'owner-shop') await renderOwnerShop(params.id);
       else if (name === 'owner-product') await renderOwnerProduct(params.shopId, params.productId);
-      else await renderHome();
+      else await renderRoleGate();
     } catch (err) {
+      if (seq !== renderSeq) return;
       view.innerHTML = `
         <div class="results-empty">
           <div class="empty-icon">!</div>
@@ -203,24 +466,92 @@
           <p>${escapeHtml(err.message)}</p>
           <button type="button" class="btn btn-secondary mt-16" id="retry-btn">Qayta urinish</button>
         </div>`;
-      $('#retry-btn')?.addEventListener('click', render);
+      $('#retry-btn')?.addEventListener('click', () => {
+        state.markets = [];
+        render();
+      });
     }
   }
 
-  async function loadMarkets() {
-    if (state.markets.length) return state.markets;
-    const data = await api('/markets');
-    state.markets = data.markets || [];
-    if (!state.selectedMarketId && state.markets[0]) {
-      state.selectedMarketId = state.markets[0].id;
+  async function renderRoleGate() {
+    setHeader('Bozor Top', 'Rolingizni tanlang', false);
+    applyRoleChrome();
+    view.innerHTML = `
+      <section class="role-gate">
+        <div class="role-hero">
+          <div class="hero-kicker">Xush kelibsiz</div>
+          <h2>Siz kimsiz?</h2>
+          <p>Davom etish uchun rolingizni tanlang</p>
+        </div>
+        <button type="button" class="role-card buyer" id="role-buyer">
+          <div class="role-icon" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.7 13.4a2 2 0 002 1.6h9.7a2 2 0 002-1.6L23 6H6"/></svg>
+          </div>
+          <div class="role-text">
+            <h3>Xaridorman</h3>
+            <p>Bozordan mahsulot qidirish, do'kon va narxlarni ko'rish</p>
+          </div>
+          ${iconChevron()}
+        </button>
+        <button type="button" class="role-card owner" id="role-owner">
+          <div class="role-icon owner" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l1-4h16l1 4"/><path d="M4 9v11h16V9"/><path d="M9 13h6"/></svg>
+          </div>
+          <div class="role-text">
+            <h3>Do'kon egasiman</h3>
+            <p>Telefon va parol bilan kirish, mahsulotlarni boshqarish</p>
+          </div>
+          ${iconChevron()}
+        </button>
+      </section>
+    `;
+
+    $('#role-buyer')?.addEventListener('click', () => {
+      haptic('medium');
+      setRole('buyer');
+      state.history = [];
+      navigate('home', {}, { push: false });
+    });
+    $('#role-owner')?.addEventListener('click', () => {
+      haptic('medium');
+      // Chiqishdan keyin token bo'lmasa — login formasi chiqadi
+      setRole('owner');
+      state.history = [];
+      navigate('owner', {}, { push: false });
+    });
+  }
+
+  async function loadMarkets(force = false) {
+    if (!force && state.markets.length) return state.markets;
+
+    let lastErr;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const data = await api('/markets');
+        const list = Array.isArray(data.markets) ? data.markets : null;
+        if (!list) throw new Error("Bozorlar ro'yxati kelmadi");
+        state.markets = list;
+        if (!state.selectedMarketId && state.markets[0]) {
+          state.selectedMarketId = state.markets[0].id;
+        }
+        return state.markets;
+      } catch (err) {
+        lastErr = err;
+        // qisqa kutib qayta urinish (ngrok / tarmoq)
+        await new Promise((r) => setTimeout(r, 250 * attempt));
+      }
     }
-    return state.markets;
+    throw lastErr || new Error("Bozorlarni yuklab bo'lmadi");
   }
 
   async function renderHome() {
+    if (state.role !== 'buyer') {
+      return navigate('role', {}, { push: false });
+    }
     setNav('home');
     setHeader('Bozor Top', 'Katta bozorlarda qidirish', false);
-    const markets = await loadMarkets();
+    applyRoleChrome();
+    const markets = await loadMarkets(true);
 
     view.innerHTML = `
       <section class="hero">
@@ -244,15 +575,15 @@
         <span>${markets.length} ta</span>
       </div>
       <div class="market-grid">
-        ${markets.map((m) => `
+        ${markets.length ? markets.map((m) => `
           <button type="button" class="market-card" data-id="${m.id}">
             <div class="market-thumb">
               ${m.image_url
-                ? `<img src="${escapeHtml(m.image_url)}" alt="" />`
+                ? `<img src="${escapeHtml(m.image_url)}" alt="" loading="lazy" />`
                 : escapeHtml(initials(m.name))}
             </div>
             <div class="market-info">
-              <h4>${escapeHtml(m.name)}</h4>
+              <h4>${escapeHtml(marketLabel(m.name))}</h4>
               <p>${escapeHtml(m.description || m.address || m.city || '')}</p>
               <div class="market-meta">
                 <span class="chip accent">${m.shops_count || 0} do'kon</span>
@@ -261,9 +592,26 @@
             </div>
             ${iconChevron()}
           </button>
-        `).join('')}
+        `).join('') : `
+          <div class="results-empty">
+            <h4>Bozorlar topilmadi</h4>
+            <p>Qayta yuklashni bosing</p>
+            <button type="button" class="btn btn-primary mt-16" id="reload-markets">Qayta yuklash</button>
+          </div>
+        `}
       </div>
+      <button type="button" class="btn btn-ghost btn-block mt-16" id="switch-role">Rolni almashtirish</button>
     `;
+
+    $('#reload-markets')?.addEventListener('click', () => {
+      state.markets = [];
+      navigate('home', {}, { push: false });
+    });
+    $('#switch-role')?.addEventListener('click', () => {
+      setRole(null);
+      state.history = [];
+      navigate('role', {}, { push: false });
+    });
 
     view.querySelectorAll('.market-card').forEach((el) => {
       el.addEventListener('click', () => {
@@ -280,13 +628,13 @@
     const data = await api(`/markets/${id}`);
     const { market, shops } = data;
     state.selectedMarketId = market.id;
-    setHeader(market.name, market.city || 'Katta bozor', true);
+    setHeader(marketLabel(market.name), market.city || 'Katta bozor', true);
 
     const popular = ["olma", "guruch", "non", "go'sht", "pomidor", "choy"];
 
     view.innerHTML = `
       <section class="hero" style="padding:16px;">
-        <h2 style="font-size:1.2rem;margin-bottom:6px;">${escapeHtml(market.name)}</h2>
+        <h2 style="font-size:1.2rem;margin-bottom:6px;">${escapeHtml(marketLabel(market.name))}</h2>
         <p>${escapeHtml(market.description || '')}</p>
         ${market.address ? `<p class="mt-8" style="font-size:0.85rem;">${escapeHtml(market.address)}</p>` : ''}
       </section>
@@ -361,7 +709,11 @@
   }
 
   async function renderSearch(marketId, q = '') {
+    if (state.role !== 'buyer') {
+      return navigate('role', {}, { push: false });
+    }
     setNav('search');
+    applyRoleChrome();
     const markets = await loadMarkets();
     const mid = Number(marketId) || state.selectedMarketId || markets[0]?.id;
     state.selectedMarketId = mid;
@@ -371,7 +723,7 @@
     view.innerHTML = `
       <select class="market-select" id="search-market">
         ${markets.map((m) => `
-          <option value="${m.id}" ${m.id === mid ? 'selected' : ''}>${escapeHtml(m.name)} — ${escapeHtml(m.city || '')}</option>
+          <option value="${m.id}" ${m.id === mid ? 'selected' : ''}>${escapeHtml(marketLabel(m.name))} — ${escapeHtml(m.city || '')}</option>
         `).join('')}
       </select>
       <div class="search-box">
@@ -463,17 +815,28 @@
           </div>
           <div class="product-list">
             ${group.products.map((p) => `
-              <button type="button" class="product-row" data-product="${p.id}">
-                <div class="product-thumb">${productThumb(p)}</div>
-                <div class="product-info">
-                  <h5>${escapeHtml(p.name)}</h5>
-                  <p>${escapeHtml(p.description || p.unit || '')}</p>
+              <div class="product-row-wrap">
+                <button type="button" class="product-row" data-product="${p.id}">
+                  <div class="product-thumb">${productThumb(p)}</div>
+                  <div class="product-info">
+                    <h5>${escapeHtml(p.name)}</h5>
+                    <p>${escapeHtml(p.description || p.unit || '')}</p>
+                  </div>
+                  <div class="price-tag">
+                    ${formatPrice(p.price)}
+                    <small>/${escapeHtml(p.unit || 'dona')}</small>
+                  </div>
+                </button>
+                <div class="product-actions" data-meta="${encodeURIComponent(JSON.stringify({
+                  shop_id: group.shop_id,
+                  shop_name: group.shop_name,
+                  shop_phone: group.shop_phone,
+                  shop_address: group.shop_address,
+                }))}">
+                  ${favBtnHtml(p.id)}
+                  <button type="button" class="icon-chip cart" data-add-cart="${p.id}" data-name="${escapeHtml(p.name)}" data-price="${p.price}" data-unit="${escapeHtml(p.unit || 'dona')}" data-img="${escapeHtml(p.image_url || '')}">Savat</button>
                 </div>
-                <div class="price-tag">
-                  ${formatPrice(p.price)}
-                  <small>/${escapeHtml(p.unit || 'dona')}</small>
-                </div>
-              </button>
+              </div>
             `).join('')}
           </div>
         </article>
@@ -489,18 +852,58 @@
         navigate('product', { id: Number(el.dataset.product) });
       });
     });
+    container.querySelectorAll('[data-fav]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = Number(el.dataset.fav);
+        const row = el.closest('.product-row-wrap');
+        let meta = {};
+        try { meta = JSON.parse(decodeURIComponent(row.querySelector('.product-actions').dataset.meta || '%7B%7D')); } catch (_) {}
+        const nameBtn = row.querySelector('[data-add-cart]');
+        const p = {
+          id,
+          name: nameBtn?.dataset.name,
+          price: Number(nameBtn?.dataset.price),
+          unit: nameBtn?.dataset.unit,
+          image_url: nameBtn?.dataset.img || null,
+        };
+        const on = toggleFavorite(p, meta);
+        el.textContent = on ? '♥' : '♡';
+        el.classList.toggle('on', on);
+      });
+    });
+    container.querySelectorAll('[data-add-cart]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        let meta = {};
+        try { meta = JSON.parse(decodeURIComponent(el.closest('.product-actions').dataset.meta || '%7B%7D')); } catch (_) {}
+        addToCart({
+          id: Number(el.dataset.addCart),
+          name: el.dataset.name,
+          price: Number(el.dataset.price),
+          unit: el.dataset.unit,
+          image_url: el.dataset.img || null,
+        }, meta);
+      });
+    });
   }
 
   async function renderShop(id) {
     setNav('home');
     const data = await api(`/shops/${id}`);
     const { shop, products } = data;
-    setHeader(shop.name, shop.market_name || "Do'kon", true);
+    setHeader(shop.name, marketLabel(shop.market_name) || "Do'kon", true);
+    const shopMeta = {
+      shop_id: shop.id,
+      shop_name: shop.name,
+      shop_phone: shop.phone,
+      shop_address: shop.address,
+    };
 
     view.innerHTML = `
       <div class="detail-hero">
         <h2>${escapeHtml(shop.name)}</h2>
-        <p class="muted">${escapeHtml(shop.description || shop.market_name || '')}</p>
+        <p class="muted">${escapeHtml(shop.description || marketLabel(shop.market_name) || '')}</p>
         <div class="shop-contacts">
           <div class="contact-row">${iconPin()}<span>${escapeHtml(shop.address)}</span></div>
           <div class="contact-row">${iconPhone()}<a href="${phoneLink(shop.phone)}">${escapeHtml(shop.phone)}</a></div>
@@ -516,16 +919,22 @@
       ${products.length ? `
         <div class="product-grid">
           ${products.map((p) => `
-            <button type="button" class="product-card" data-product="${p.id}">
-              <div class="ph">${productThumb(p)}</div>
-              <div class="body">
-                <h5>${escapeHtml(p.name)}</h5>
-                <div class="price-tag" style="text-align:left;font-size:0.88rem;">
-                  ${formatPrice(p.price)}
-                  <small style="display:inline;margin-left:4px;">/${escapeHtml(p.unit || 'dona')}</small>
+            <div class="product-card-wrap">
+              <button type="button" class="product-card" data-product="${p.id}">
+                <div class="ph">${productThumb(p)}</div>
+                <div class="body">
+                  <h5>${escapeHtml(p.name)}</h5>
+                  <div class="price-tag" style="text-align:left;font-size:0.88rem;">
+                    ${formatPrice(p.price)}
+                    <small style="display:inline;margin-left:4px;">/${escapeHtml(p.unit || 'dona')}</small>
+                  </div>
                 </div>
+              </button>
+              <div class="card-actions">
+                ${favBtnHtml(p.id)}
+                <button type="button" class="btn btn-primary btn-sm" data-add-cart="${p.id}" data-name="${escapeHtml(p.name)}" data-price="${p.price}" data-unit="${escapeHtml(p.unit || 'dona')}" data-img="${escapeHtml(p.image_url || '')}">Savat</button>
               </div>
-            </button>
+            </div>
           `).join('')}
         </div>
       ` : `<div class="results-empty"><p>Mahsulotlar hali qo'shilmagan</p></div>`}
@@ -534,12 +943,46 @@
     view.querySelectorAll('[data-product]').forEach((el) => {
       el.addEventListener('click', () => navigate('product', { id: Number(el.dataset.product) }));
     });
+    view.querySelectorAll('[data-fav]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const wrap = el.closest('.product-card-wrap');
+        const btn = wrap.querySelector('[data-add-cart]');
+        const on = toggleFavorite({
+          id: Number(el.dataset.fav),
+          name: btn.dataset.name,
+          price: Number(btn.dataset.price),
+          unit: btn.dataset.unit,
+          image_url: btn.dataset.img || null,
+        }, shopMeta);
+        el.textContent = on ? '♥' : '♡';
+        el.classList.toggle('on', on);
+      });
+    });
+    view.querySelectorAll('[data-add-cart]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        addToCart({
+          id: Number(el.dataset.addCart),
+          name: el.dataset.name,
+          price: Number(el.dataset.price),
+          unit: el.dataset.unit,
+          image_url: el.dataset.img || null,
+        }, shopMeta);
+      });
+    });
   }
 
   async function renderProduct(id) {
     setNav('home');
     const { product } = await api(`/products/${id}`);
     setHeader(product.name, product.shop_name, true);
+    const meta = {
+      shop_id: product.shop_id || product.shopId,
+      shop_name: product.shop_name,
+      shop_phone: product.shop_phone,
+      shop_address: product.shop_address,
+    };
 
     view.innerHTML = `
       <div class="sheet">
@@ -563,7 +1006,9 @@
             </div>
           </div>
           <div class="action-row mt-16">
-            <a class="btn btn-primary btn-block" href="${phoneLink(product.shop_phone)}">Do'konga qo'ng'iroq</a>
+            <button type="button" class="btn btn-primary btn-block" id="add-cart">Savatga qo'shish</button>
+            <button type="button" class="btn btn-secondary btn-block" id="toggle-fav">${isFavorite(product.id) ? 'Sevimlidan olib tashlash' : "Sevimlilarga qo'shish"}</button>
+            <a class="btn btn-ghost btn-block" href="${phoneLink(product.shop_phone)}">Do'konga qo'ng'iroq</a>
             <button type="button" class="btn btn-secondary btn-block" id="goto-shop">Do'kon sahifasi</button>
           </div>
         </div>
@@ -571,37 +1016,183 @@
     `;
 
     $('#goto-shop').addEventListener('click', () => navigate('shop', { id: product.shop_id }));
+    $('#add-cart').addEventListener('click', () => addToCart(product, meta));
+    $('#toggle-fav').addEventListener('click', () => {
+      const on = toggleFavorite(product, meta);
+      $('#toggle-fav').textContent = on ? 'Sevimlidan olib tashlash' : "Sevimlilarga qo'shish";
+    });
+  }
+
+  async function renderFavorites() {
+    if (state.role !== 'buyer') return navigate('role', {}, { push: false });
+    setNav('favorites');
+    // Ochilganda serverdan yangilash
+    await syncFavoritesAndCartFromServer();
+    setHeader('Sevimlilar', `${state.favorites.length} ta`, false);
+    applyRoleChrome();
+
+    if (!state.favorites.length) {
+      view.innerHTML = `
+        <div class="results-empty">
+          <h4>Sevimlilar bo'sh</h4>
+          <p>Mahsulot yonidagi ♡ tugmasini bosing</p>
+        </div>`;
+      return;
+    }
+
+    view.innerHTML = `
+      <div class="stack">
+        ${state.favorites.map((p) => `
+          <div class="owner-shop" style="display:grid;grid-template-columns:56px 1fr;gap:12px;align-items:center;">
+            <div class="product-thumb" style="width:56px;height:56px;">${productThumb(p)}</div>
+            <div>
+              <h4 style="margin-bottom:2px;">${escapeHtml(p.name)}</h4>
+              <p style="margin-bottom:6px;">${formatPrice(p.price)} / ${escapeHtml(p.unit || 'dona')}</p>
+              <p class="text-muted" style="margin-bottom:8px;font-size:0.8rem;">${escapeHtml(p.shop_name || '')}</p>
+              <div class="owner-actions">
+                <button type="button" class="btn btn-primary btn-sm" data-open="${p.id}">Ochish</button>
+                <button type="button" class="btn btn-secondary btn-sm" data-to-cart="${p.id}">Savat</button>
+                <button type="button" class="btn btn-danger btn-sm" data-unfav="${p.id}">Olib tashlash</button>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    view.querySelectorAll('[data-open]').forEach((el) => {
+      el.addEventListener('click', () => navigate('product', { id: Number(el.dataset.open) }));
+    });
+    view.querySelectorAll('[data-to-cart]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const p = state.favorites.find((f) => Number(f.id) === Number(el.dataset.toCart));
+        if (p) addToCart(p);
+      });
+    });
+    view.querySelectorAll('[data-unfav]').forEach((el) => {
+      el.addEventListener('click', () => {
+        state.favorites = state.favorites.filter((f) => Number(f.id) !== Number(el.dataset.unfav));
+        saveFavorites();
+        renderFavorites();
+      });
+    });
+  }
+
+  async function renderCart() {
+    if (state.role !== 'buyer') return navigate('role', {}, { push: false });
+    setNav('cart');
+    // Ochilganda serverdan yangilash
+    await syncFavoritesAndCartFromServer();
+    setHeader('Savat', `${state.cart.length} xil`, false);
+    applyRoleChrome();
+
+    if (!state.cart.length) {
+      view.innerHTML = `
+        <div class="results-empty">
+          <h4>Savat bo'sh</h4>
+          <p>Mahsulotlarni savatga qo'shing</p>
+        </div>`;
+      return;
+    }
+
+    const total = state.cart.reduce((s, i) => s + Number(i.price || 0) * (i.qty || 1), 0);
+
+    view.innerHTML = `
+      <div class="stack">
+        ${state.cart.map((p) => `
+          <div class="owner-shop">
+            <div style="display:grid;grid-template-columns:56px 1fr;gap:12px;align-items:center;">
+              <div class="product-thumb" style="width:56px;height:56px;">${productThumb(p)}</div>
+              <div>
+                <h4 style="margin-bottom:2px;">${escapeHtml(p.name)}</h4>
+                <p style="margin-bottom:4px;">${formatPrice(p.price)} / ${escapeHtml(p.unit || 'dona')}</p>
+                <p class="text-muted" style="font-size:0.8rem;margin-bottom:8px;">${escapeHtml(p.shop_name || '')} · ${escapeHtml(p.shop_phone || '')}</p>
+              </div>
+            </div>
+            <div class="owner-actions mt-8" style="align-items:center;">
+              <button type="button" class="btn btn-secondary btn-sm" data-dec="${p.id}">−</button>
+              <span style="min-width:2rem;text-align:center;font-weight:600;">${p.qty || 1}</span>
+              <button type="button" class="btn btn-secondary btn-sm" data-inc="${p.id}">+</button>
+              <button type="button" class="btn btn-danger btn-sm" data-rm="${p.id}">O'chirish</button>
+              ${p.shop_phone ? `<a class="btn btn-primary btn-sm" href="${phoneLink(p.shop_phone)}">Qo'ng'iroq</a>` : ''}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="form-card mt-16">
+        <div class="section-head" style="margin:0;">
+          <h3>Jami</h3>
+          <span class="price-tag" style="font-size:1.1rem;">${formatPrice(total)}</span>
+        </div>
+        <p class="text-muted mt-8" style="font-size:0.82rem;">Buyurtma uchun do'konga qo'ng'iroq qiling — savat eslatma sifatida.</p>
+        <button type="button" class="btn btn-ghost btn-block mt-12" id="clear-cart">Savatni tozalash</button>
+      </div>
+    `;
+
+    view.querySelectorAll('[data-inc]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const item = state.cart.find((c) => Number(c.id) === Number(el.dataset.inc));
+        if (item) setCartQty(item.id, (item.qty || 1) + 1);
+        renderCart();
+      });
+    });
+    view.querySelectorAll('[data-dec]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const item = state.cart.find((c) => Number(c.id) === Number(el.dataset.dec));
+        if (!item) return;
+        if ((item.qty || 1) <= 1) removeFromCart(item.id);
+        else setCartQty(item.id, item.qty - 1);
+        renderCart();
+      });
+    });
+    view.querySelectorAll('[data-rm]').forEach((el) => {
+      el.addEventListener('click', () => {
+        removeFromCart(el.dataset.rm);
+        renderCart();
+      });
+    });
+    $('#clear-cart')?.addEventListener('click', () => {
+      state.cart = [];
+      saveCart();
+      renderCart();
+    });
   }
 
   // ——— Owner panel ———
 
   async function renderOwner() {
+    if (state.role !== 'owner') {
+      return navigate('role', {}, { push: false });
+    }
     setNav('owner');
     setHeader("Mening do'konim", "Do'kon va mahsulotlar", false);
+    applyRoleChrome();
+
+    // Token yo'q = chiqilgan — Telegram orqali avtomatik kirish YO'Q
+    if (!state.ownerToken) {
+      showOwnerLoginForm();
+      return;
+    }
 
     let me;
     try {
       me = await api('/me');
       state.me = me;
     } catch (err) {
-      view.innerHTML = `
-        <div class="results-empty">
-          <h4>Kirish kerak</h4>
-          <p>Bu bo'lim Telegram bot orqali ochilganda ishlaydi. Lokal test uchun dev rejim yoqilgan.</p>
-          <p class="text-muted mt-8">${escapeHtml(err.message)}</p>
-        </div>`;
+      // Token yaroqsiz — qayta login
+      clearOwnerSession();
+      showOwnerLoginForm(err.message || 'Qayta kiring');
       return;
     }
 
     const shops = me.shops || [];
+    const displayName = me.user.name || me.user.first_name || 'Salom';
     view.innerHTML = `
       <section class="hero" style="padding:16px;">
         <div class="hero-kicker">Do'kon egasi</div>
-        <h2 style="font-size:1.2rem;">${escapeHtml(me.user.first_name || 'Salom')}</h2>
-        <p>Do'koningizni qo'shing, mahsulotlar (rasm + narx) kiriting. Xaridorlar qidiruvda sizni topadi.</p>
+        <h2 style="font-size:1.2rem;">${escapeHtml(displayName)}</h2>
+        <p>Mahsulotlar (rasm + narx) kiriting. Xaridorlar qidiruvda sizni topadi.${me.user.phone ? ` · ${escapeHtml(me.user.phone)}` : ''}</p>
       </section>
-
-      <button type="button" class="btn btn-primary btn-block mb-16" id="btn-new-shop">+ Yangi do'kon ochish</button>
 
       <div class="section-head">
         <h3>Do'konlarim</h3>
@@ -619,12 +1210,18 @@
       `).join('') : `
         <div class="results-empty">
           <h4>Do'kon yo'q</h4>
-          <p>Yuqoridagi tugma orqali bozorga do'kon qo'shing</p>
+          <p>Superadmin sizga do'kon biriktirishi kerak.</p>
         </div>
       `}
+      <button type="button" class="btn btn-ghost btn-block mt-16" id="owner-logout">Chiqish</button>
     `;
 
-    $('#btn-new-shop').addEventListener('click', () => navigate('owner-create'));
+    $('#owner-logout')?.addEventListener('click', () => {
+      clearOwnerSession();
+      setRole(null);
+      toast('Chiqildi — qayta kirish uchun telefon va parol kerak');
+      navigate('role', {}, { push: false });
+    });
     view.querySelectorAll('[data-manage]').forEach((el) => {
       el.addEventListener('click', () => navigate('owner-shop', { id: Number(el.dataset.manage) }));
     });
@@ -711,6 +1308,11 @@
   }
 
   async function renderOwnerShop(shopId) {
+    if (!state.ownerToken || state.role !== 'owner') {
+      clearOwnerSession();
+      setRole('owner');
+      return navigate('owner', {}, { push: false });
+    }
     setNav('owner');
     const data = await api(`/shops/${shopId}`);
     const { shop, products } = data;
@@ -769,6 +1371,11 @@
   }
 
   async function renderOwnerProduct(shopId, productId) {
+    if (!state.ownerToken || state.role !== 'owner') {
+      clearOwnerSession();
+      setRole('owner');
+      return navigate('owner', {}, { push: false });
+    }
     setNav('owner');
     let product = null;
     if (productId) {
@@ -858,19 +1465,221 @@
     });
   }
 
-  // ——— Boot ———
+  // ——— Live updates (F5 shart emas) ———
 
-  async function boot() {
-    try {
-      await loadMarkets();
-    } catch (err) {
-      console.warn('Markets load failed', err);
+  let liveAppVer = null;
+  let liveDataRev = null;
+  let liveBusy = false;
+  const LIVE_INTERVAL_MS = 4000;
+
+  function isUserTyping() {
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = (el.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+    if (el.isContentEditable) return true;
+    return false;
+  }
+
+  function showLiveToast(msg) {
+    toast(msg, 'success');
+  }
+
+  /**
+   * Sevimli va savatni server bilan sinxronlash:
+   * narx/nom/rasm yangilanadi, o'chirilgan mahsulotlar olib tashlanadi.
+   */
+  async function syncFavoritesAndCartFromServer() {
+    loadStore();
+    const ids = new Set([
+      ...state.favorites.map((f) => Number(f.id)),
+      ...state.cart.map((c) => Number(c.id)),
+    ]);
+    if (!ids.size) {
+      updateCartBadge();
+      return { favChanged: false, cartChanged: false, removed: 0 };
     }
-    applyHash();
-    if (!location.hash) {
-      navigate('home', {}, { push: false });
+
+    const freshMap = new Map();
+    await Promise.all(
+      [...ids].map(async (id) => {
+        try {
+          const data = await api(`/products/${id}`);
+          const p = data.product;
+          if (!p || p.is_available === 0) {
+            freshMap.set(id, null);
+            return;
+          }
+          freshMap.set(id, {
+            id: p.id,
+            name: p.name,
+            price: p.price,
+            unit: p.unit || 'dona',
+            image_url: p.image_url || null,
+            shop_id: p.shop_id || null,
+            shop_name: p.shop_name || '',
+            shop_phone: p.shop_phone || '',
+            shop_address: p.shop_address || '',
+          });
+        } catch {
+          freshMap.set(id, null); // o'chirilgan yoki topilmadi
+        }
+      })
+    );
+
+    let removed = 0;
+    const prevFav = JSON.stringify(state.favorites);
+    const prevCart = JSON.stringify(state.cart);
+
+    state.favorites = state.favorites
+      .map((f) => {
+        const fresh = freshMap.get(Number(f.id));
+        if (!fresh) {
+          removed += 1;
+          return null;
+        }
+        return { ...f, ...fresh };
+      })
+      .filter(Boolean);
+
+    state.cart = state.cart
+      .map((c) => {
+        const fresh = freshMap.get(Number(c.id));
+        if (!fresh) {
+          removed += 1;
+          return null;
+        }
+        return { ...c, ...fresh, qty: c.qty || 1 };
+      })
+      .filter(Boolean);
+
+    const favChanged = JSON.stringify(state.favorites) !== prevFav;
+    const cartChanged = JSON.stringify(state.cart) !== prevCart;
+
+    if (favChanged) saveFavorites();
+    if (cartChanged) saveCart();
+    else updateCartBadge();
+
+    return { favChanged, cartChanged, removed };
+  }
+
+  async function softRefreshCurrentView() {
+    // Sevimli/savatni har doim server bilan yangilash
+    const sync = await syncFavoritesAndCartFromServer();
+
+    // Cache tozalash — yangi ma'lumot olinadi
+    state.markets = [];
+    const name = state.route?.name;
+    // Forma yozilayotgan ekranlarni buzmaslik
+    if (['owner-product', 'owner-create', 'role'].includes(name)) {
+      // lekin badge yangilangan bo'lishi mumkin
+      updateCartBadge();
+      return;
+    }
+    if (isUserTyping()) return;
+
+    // Sevimli / savat ochiq bo'lsa — albatta qayta chizish
+    if (name === 'favorites' || name === 'cart') {
+      await render();
+      if (sync.removed > 0) {
+        showLiveToast(name === 'cart' ? 'Savat yangilandi' : 'Sevimlilar yangilandi');
+      }
+      return;
+    }
+
+    await render();
+    // Boshqa ekranda bo'lsa ham sevimli/savat badge yangilanadi
+    updateCartBadge();
+  }
+
+  async function pollLiveVersion() {
+    if (document.hidden || liveBusy) return;
+    liveBusy = true;
+    try {
+      const res = await fetch(`/api/version?_=${Date.now()}`, {
+        headers: { 'ngrok-skip-browser-warning': '1', Accept: 'application/json' },
+        cache: 'no-store',
+      });
+      if (!res.ok) return;
+      const ver = await res.json();
+      if (!ver || !ver.app) return;
+
+      if (liveAppVer == null) {
+        liveAppVer = ver.app;
+        liveDataRev = ver.data;
+        // Birinchi ishga tushishda ham sevimli/savatni sinxronlash
+        await syncFavoritesAndCartFromServer();
+        return;
+      }
+
+      // Kod (UI) yangilandi — avtomatik qayta yuklash (foydalanuvchi F5 bosmaydi)
+      if (ver.app !== liveAppVer) {
+        liveAppVer = ver.app;
+        showLiveToast('Ilova yangilandi…');
+        setTimeout(() => {
+          const url = new URL(location.href);
+          url.searchParams.set('_v', String(Date.now()));
+          location.replace(url.toString());
+        }, 400);
+        return;
+      }
+
+      // Ma'lumotlar (bozor/do'kon/mahsulot) o'zgardi — joriy ekranni yumshoq yangilash
+      if (ver.data !== liveDataRev) {
+        liveDataRev = ver.data;
+        if (!isUserTyping()) {
+          await softRefreshCurrentView();
+        } else {
+          // Yozayotganda ham sevimli/savat fonda sinxronlansin
+          await syncFavoritesAndCartFromServer();
+        }
+      }
+    } catch (_) {
+      /* tarmoq vaqtincha ishlamasa jim turamiz */
+    } finally {
+      liveBusy = false;
     }
   }
 
-  boot();
+  function startLiveUpdates() {
+    pollLiveVersion();
+    setInterval(pollLiveVersion, LIVE_INTERVAL_MS);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) pollLiveVersion();
+    });
+  }
+
+  // ——— Boot ———
+
+  async function boot() {
+    captureOwnerTokenFromUrl();
+    // Deep link token → egasi
+    if (state.ownerToken && (location.hash || '').includes('owner')) {
+      setRole('owner');
+    }
+
+    const routed = routeFromHash();
+    if (!routed) {
+      // Har WebApp ochilishida rol so'raladi (session ichida saqlanadi)
+      if (!state.role) {
+        await navigate('role', {}, { push: false });
+      } else if (state.role === 'owner') {
+        await navigate('owner', {}, { push: false });
+      } else {
+        await navigate('home', {}, { push: false });
+      }
+    }
+
+    startLiveUpdates();
+    updateCartBadge();
+  }
+
+  // DOM tayyor bo'lishini kutish (Telegram WebView)
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      boot().catch((e) => console.error('boot', e));
+    });
+  } else {
+    boot().catch((e) => console.error('boot', e));
+  }
 })();

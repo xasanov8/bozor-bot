@@ -39,10 +39,20 @@ function initDb() {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS owners (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phone TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      name TEXT NOT NULL,
+      telegram_id TEXT,
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS shops (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       market_id INTEGER NOT NULL,
-      owner_telegram_id TEXT NOT NULL,
+      owner_telegram_id TEXT,
       name TEXT NOT NULL,
       phone TEXT NOT NULL,
       address TEXT NOT NULL,
@@ -66,11 +76,26 @@ function initDb() {
       updated_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE
     );
+  `);
 
+  // Migrate older DBs missing columns
+  const shopCols = db.prepare('PRAGMA table_info(shops)').all().map((c) => c.name);
+  if (!shopCols.includes('owner_id')) {
+    db.exec('ALTER TABLE shops ADD COLUMN owner_id INTEGER');
+  }
+  const ownerCols = db.prepare('PRAGMA table_info(owners)').all().map((c) => c.name);
+  if (!ownerCols.includes('password_plain')) {
+    db.exec('ALTER TABLE owners ADD COLUMN password_plain TEXT');
+  }
+
+  db.exec(`
     CREATE INDEX IF NOT EXISTS idx_shops_market ON shops(market_id);
     CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id);
     CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
     CREATE INDEX IF NOT EXISTS idx_shops_owner ON shops(owner_telegram_id);
+    CREATE INDEX IF NOT EXISTS idx_shops_owner_id ON shops(owner_id);
+    CREATE INDEX IF NOT EXISTS idx_owners_phone ON owners(phone);
+    CREATE INDEX IF NOT EXISTS idx_owners_tg ON owners(telegram_id);
   `);
 }
 
@@ -82,35 +107,163 @@ function refreshMarketShopCount(marketId) {
   `).run(marketId, marketId);
 }
 
-function upsertUser({ telegramId, username, firstName, lastName }) {
+function slugify(name) {
+  return String(name)
+    .toLowerCase()
+    .replace(/[''`ʻ’]/g, '')
+    .replace(/[^a-z0-9\u0400-\u04FF]+/gi, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60) || `market-${Date.now()}`;
+}
+
+function upsertUser({ telegramId, username, firstName, lastName, role }) {
   const existing = db.prepare('SELECT * FROM users WHERE telegram_id = ?').get(String(telegramId));
   if (existing) {
     db.prepare(`
-      UPDATE users SET username = ?, first_name = ?, last_name = ?
+      UPDATE users SET username = ?, first_name = ?, last_name = ?,
+        role = COALESCE(?, role)
       WHERE telegram_id = ?
-    `).run(username || null, firstName || null, lastName || null, String(telegramId));
+    `).run(username || null, firstName || null, lastName || null, role || null, String(telegramId));
     return db.prepare('SELECT * FROM users WHERE telegram_id = ?').get(String(telegramId));
   }
   db.prepare(`
-    INSERT INTO users (telegram_id, username, first_name, last_name)
-    VALUES (?, ?, ?, ?)
-  `).run(String(telegramId), username || null, firstName || null, lastName || null);
+    INSERT INTO users (telegram_id, username, first_name, last_name, role)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(String(telegramId), username || null, firstName || null, lastName || null, role || 'buyer');
   return db.prepare('SELECT * FROM users WHERE telegram_id = ?').get(String(telegramId));
 }
 
+// ——— Markets ———
+
 function getMarkets() {
-  return db.prepare(`
-    SELECT * FROM markets WHERE is_active = 1 ORDER BY name ASC
-  `).all();
+  return db.prepare(`SELECT * FROM markets WHERE is_active = 1 ORDER BY name ASC`).all();
+}
+
+function getAllMarkets() {
+  return db.prepare(`SELECT * FROM markets ORDER BY name ASC`).all();
 }
 
 function getMarketById(id) {
-  return db.prepare('SELECT * FROM markets WHERE id = ? AND is_active = 1').get(id);
+  return db.prepare('SELECT * FROM markets WHERE id = ?').get(id);
 }
 
 function getMarketBySlug(slug) {
-  return db.prepare('SELECT * FROM markets WHERE slug = ? AND is_active = 1').get(slug);
+  return db.prepare('SELECT * FROM markets WHERE slug = ?').get(slug);
 }
+
+function ensureBozoriName(name) {
+  let n = String(name || '').trim();
+  if (!n) return n;
+  if (!/bozori$/i.test(n)) {
+    n = `${n.replace(/\s*bozor$/i, '').trim()} bozori`;
+  }
+  return n;
+}
+
+function createMarket({ name, slug, description, city, address, imageUrl }) {
+  const displayName = ensureBozoriName(name);
+  let s = slug || slugify(displayName);
+  let n = 1;
+  while (getMarketBySlug(s)) {
+    s = `${slugify(displayName)}-${n++}`;
+  }
+  const result = db.prepare(`
+    INSERT INTO markets (name, slug, description, city, address, image_url)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(displayName, s, description || null, city || 'Toshkent', address || null, imageUrl || null);
+  return getMarketById(result.lastInsertRowid);
+}
+
+function updateMarket(id, data) {
+  const m = getMarketById(id);
+  if (!m) return null;
+  db.prepare(`
+    UPDATE markets SET
+      name = COALESCE(?, name),
+      description = COALESCE(?, description),
+      city = COALESCE(?, city),
+      address = COALESCE(?, address),
+      image_url = COALESCE(?, image_url),
+      is_active = COALESCE(?, is_active)
+    WHERE id = ?
+  `).run(
+    data.name ?? null,
+    data.description ?? null,
+    data.city ?? null,
+    data.address ?? null,
+    data.imageUrl ?? null,
+    data.isActive ?? null,
+    id
+  );
+  return getMarketById(id);
+}
+
+// ——— Owners ———
+
+function getOwnerById(id) {
+  return db.prepare('SELECT * FROM owners WHERE id = ?').get(id);
+}
+
+function getOwnerByPhone(phone) {
+  return db.prepare('SELECT * FROM owners WHERE phone = ? AND is_active = 1').get(phone);
+}
+
+function getOwnerByTelegramId(telegramId) {
+  return db.prepare('SELECT * FROM owners WHERE telegram_id = ? AND is_active = 1').get(String(telegramId));
+}
+
+function getAllOwners() {
+  return db.prepare(`
+    SELECT o.*,
+      (SELECT COUNT(*) FROM shops s WHERE s.owner_id = o.id) AS shops_count
+    FROM owners o
+    ORDER BY o.created_at DESC
+  `).all();
+}
+
+function createOwner({ phone, passwordHash, passwordPlain, name, telegramId }) {
+  const result = db.prepare(`
+    INSERT INTO owners (phone, password_hash, password_plain, name, telegram_id)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    phone,
+    passwordHash,
+    passwordPlain != null ? String(passwordPlain) : null,
+    name,
+    telegramId ? String(telegramId) : null
+  );
+  return getOwnerById(result.lastInsertRowid);
+}
+
+function updateOwnerPassword(ownerId, passwordHash, passwordPlain) {
+  db.prepare(`
+    UPDATE owners SET password_hash = ?, password_plain = ? WHERE id = ?
+  `).run(passwordHash, passwordPlain != null ? String(passwordPlain) : null, ownerId);
+  return getOwnerById(ownerId);
+}
+
+function linkOwnerTelegram(ownerId, telegramId) {
+  db.prepare('UPDATE owners SET telegram_id = ? WHERE id = ?').run(String(telegramId), ownerId);
+  // sync shops owner_telegram_id
+  db.prepare('UPDATE shops SET owner_telegram_id = ? WHERE owner_id = ?').run(String(telegramId), ownerId);
+  return getOwnerById(ownerId);
+}
+
+function publicOwner(o) {
+  if (!o) return null;
+  return {
+    id: o.id,
+    phone: o.phone,
+    name: o.name,
+    password: o.password_plain || null,
+    telegram_id: o.telegram_id,
+    is_active: o.is_active,
+    created_at: o.created_at,
+    shops_count: o.shops_count,
+  };
+}
+
+// ——— Shops ———
 
 function getShopsByMarket(marketId) {
   return db.prepare(`
@@ -122,32 +275,68 @@ function getShopsByMarket(marketId) {
   `).all(marketId);
 }
 
-function getShopById(id) {
+function getAllShops() {
   return db.prepare(`
-    SELECT s.*, m.name AS market_name, m.slug AS market_slug
+    SELECT s.*, m.name AS market_name,
+      o.name AS owner_name, o.phone AS owner_login_phone,
+      o.password_plain AS owner_password,
+      o.id AS owner_account_id,
+      (SELECT COUNT(*) FROM products p WHERE p.shop_id = s.id) AS products_count
     FROM shops s
     JOIN markets m ON m.id = s.market_id
-    WHERE s.id = ? AND s.is_active = 1
+    LEFT JOIN owners o ON o.id = s.owner_id
+    ORDER BY m.name, s.name
+  `).all();
+}
+
+function getShopById(id) {
+  return db.prepare(`
+    SELECT s.*, m.name AS market_name, m.slug AS market_slug,
+      o.name AS owner_name, o.phone AS owner_login_phone,
+      o.password_plain AS owner_password,
+      o.id AS owner_account_id
+    FROM shops s
+    JOIN markets m ON m.id = s.market_id
+    LEFT JOIN owners o ON o.id = s.owner_id
+    WHERE s.id = ?
   `).get(id);
 }
 
-function getShopsByOwner(telegramId) {
+function getShopsByOwnerTelegram(telegramId) {
   return db.prepare(`
     SELECT s.*, m.name AS market_name
     FROM shops s
     JOIN markets m ON m.id = s.market_id
-    WHERE s.owner_telegram_id = ?
+    WHERE s.owner_telegram_id = ? OR s.owner_id IN (
+      SELECT id FROM owners WHERE telegram_id = ?
+    )
     ORDER BY s.created_at DESC
-  `).all(String(telegramId));
+  `).all(String(telegramId), String(telegramId));
 }
 
-function createShop({ marketId, ownerTelegramId, name, phone, address, description, imageUrl }) {
+function getShopsByOwnerId(ownerId) {
+  return db.prepare(`
+    SELECT s.*, m.name AS market_name
+    FROM shops s
+    JOIN markets m ON m.id = s.market_id
+    WHERE s.owner_id = ?
+    ORDER BY s.created_at DESC
+  `).all(ownerId);
+}
+
+// alias used by api
+function getShopsByOwner(telegramId) {
+  return getShopsByOwnerTelegram(telegramId);
+}
+
+function createShop({ marketId, ownerTelegramId, ownerId, name, phone, address, description, imageUrl }) {
   const result = db.prepare(`
-    INSERT INTO shops (market_id, owner_telegram_id, name, phone, address, description, image_url)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO shops (market_id, owner_telegram_id, owner_id, name, phone, address, description, image_url)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     marketId,
-    String(ownerTelegramId),
+    ownerTelegramId ? String(ownerTelegramId) : null,
+    ownerId || null,
     name,
     phone,
     address,
@@ -158,10 +347,22 @@ function createShop({ marketId, ownerTelegramId, name, phone, address, descripti
   return getShopById(result.lastInsertRowid);
 }
 
-function updateShop(id, ownerTelegramId, data) {
-  const shop = db.prepare('SELECT * FROM shops WHERE id = ? AND owner_telegram_id = ?')
-    .get(id, String(ownerTelegramId));
+function shopOwnedBy(shop, telegramId, ownerId) {
+  if (!shop) return false;
+  if (ownerId && shop.owner_id && Number(shop.owner_id) === Number(ownerId)) return true;
+  if (telegramId && shop.owner_telegram_id && String(shop.owner_telegram_id) === String(telegramId)) return true;
+  if (telegramId) {
+    const owner = getOwnerByTelegramId(telegramId);
+    if (owner && shop.owner_id === owner.id) return true;
+  }
+  return false;
+}
+
+function updateShop(id, identity, data) {
+  const shop = getShopById(id);
   if (!shop) return null;
+  const ok = shopOwnedBy(shop, identity.telegramId, identity.ownerId);
+  if (!ok) return null;
 
   db.prepare(`
     UPDATE shops SET
@@ -182,6 +383,8 @@ function updateShop(id, ownerTelegramId, data) {
   return getShopById(id);
 }
 
+// ——— Products ———
+
 function getProductsByShop(shopId) {
   return db.prepare(`
     SELECT * FROM products
@@ -190,10 +393,16 @@ function getProductsByShop(shopId) {
   `).all(shopId);
 }
 
+function getAllProductsByShop(shopId) {
+  return db.prepare(`
+    SELECT * FROM products WHERE shop_id = ? ORDER BY name ASC
+  `).all(shopId);
+}
+
 function getProductById(id) {
   return db.prepare(`
     SELECT p.*, s.name AS shop_name, s.phone AS shop_phone, s.address AS shop_address,
-           s.market_id, m.name AS market_name
+           s.market_id, s.owner_id, s.owner_telegram_id, m.name AS market_name
     FROM products p
     JOIN shops s ON s.id = p.shop_id
     JOIN markets m ON m.id = s.market_id
@@ -209,13 +418,11 @@ function createProduct({ shopId, name, description, price, unit, imageUrl }) {
   return getProductById(result.lastInsertRowid);
 }
 
-function updateProduct(id, ownerTelegramId, data) {
-  const product = db.prepare(`
-    SELECT p.* FROM products p
-    JOIN shops s ON s.id = p.shop_id
-    WHERE p.id = ? AND s.owner_telegram_id = ?
-  `).get(id, String(ownerTelegramId));
+function updateProduct(id, identity, data) {
+  const product = getProductById(id);
   if (!product) return null;
+  const shop = getShopById(product.shop_id);
+  if (!shopOwnedBy(shop, identity.telegramId, identity.ownerId)) return null;
 
   db.prepare(`
     UPDATE products SET
@@ -239,21 +446,15 @@ function updateProduct(id, ownerTelegramId, data) {
   return getProductById(id);
 }
 
-function deleteProduct(id, ownerTelegramId) {
-  const product = db.prepare(`
-    SELECT p.* FROM products p
-    JOIN shops s ON s.id = p.shop_id
-    WHERE p.id = ? AND s.owner_telegram_id = ?
-  `).get(id, String(ownerTelegramId));
+function deleteProduct(id, identity) {
+  const product = getProductById(id);
   if (!product) return false;
+  const shop = getShopById(product.shop_id);
+  if (!shopOwnedBy(shop, identity.telegramId, identity.ownerId)) return false;
   db.prepare('DELETE FROM products WHERE id = ?').run(id);
   return true;
 }
 
-/**
- * Search products inside a market by free-text query.
- * Returns products with shop info, ranked by relevance.
- */
 function searchInMarket(marketId, query) {
   const q = (query || '').trim();
   if (!q) return [];
@@ -282,7 +483,6 @@ function searchInMarket(marketId, query) {
     LIMIT 80
   `).all(marketId, like, like, like, `%${words[0]}%`);
 
-  // Group by shop for nicer UI
   const byShop = new Map();
   for (const p of products) {
     if (!byShop.has(p.shop_id)) {
@@ -307,12 +507,40 @@ function searchInMarket(marketId, query) {
   return Array.from(byShop.values());
 }
 
-function createMarket({ name, slug, description, city, address, imageUrl }) {
-  const result = db.prepare(`
-    INSERT INTO markets (name, slug, description, city, address, image_url)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(name, slug, description || null, city || 'Toshkent', address || null, imageUrl || null);
-  return getMarketById(result.lastInsertRowid);
+function getDashboardStats() {
+  return {
+    markets: db.prepare('SELECT COUNT(*) AS c FROM markets').get().c,
+    shops: db.prepare('SELECT COUNT(*) AS c FROM shops').get().c,
+    products: db.prepare('SELECT COUNT(*) AS c FROM products').get().c,
+    owners: db.prepare('SELECT COUNT(*) AS c FROM owners').get().c,
+  };
+}
+
+/** UI avtomatik yangilanish uchun ma'lumot "versiyasi" */
+function getDataRevision() {
+  const row = db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM markets) AS markets,
+      (SELECT COUNT(*) FROM shops) AS shops,
+      (SELECT COUNT(*) FROM products) AS products,
+      (SELECT COUNT(*) FROM owners) AS owners,
+      (SELECT COALESCE(MAX(id),0) FROM markets) AS mid,
+      (SELECT COALESCE(MAX(id),0) FROM shops) AS sid,
+      (SELECT COALESCE(MAX(id),0) FROM products) AS pid,
+      (SELECT COALESCE(MAX(id),0) FROM owners) AS oid,
+      (SELECT COALESCE(MAX(updated_at), '') FROM products) AS pupd,
+      (SELECT COALESCE(MAX(created_at), '') FROM products) AS pcr,
+      (SELECT COALESCE(MAX(created_at), '') FROM shops) AS scr,
+      (SELECT COALESCE(MAX(created_at), '') FROM markets) AS mcr,
+      (SELECT COALESCE(SUM(price),0) FROM products) AS psum,
+      (SELECT COALESCE(SUM(shops_count),0) FROM markets) AS scsum
+  `).get();
+  return [
+    row.markets, row.shops, row.products, row.owners,
+    row.mid, row.sid, row.pid, row.oid,
+    row.pupd, row.pcr, row.scr, row.mcr,
+    row.psum, row.scsum,
+  ].join('|');
 }
 
 initDb();
@@ -322,19 +550,37 @@ module.exports = {
   initDb,
   upsertUser,
   getMarkets,
+  getAllMarkets,
   getMarketById,
   getMarketBySlug,
+  createMarket,
+  updateMarket,
+  getOwnerById,
+  getOwnerByPhone,
+  getOwnerByTelegramId,
+  getAllOwners,
+  createOwner,
+  updateOwnerPassword,
+  linkOwnerTelegram,
+  publicOwner,
   getShopsByMarket,
+  getAllShops,
   getShopById,
   getShopsByOwner,
+  getShopsByOwnerTelegram,
+  getShopsByOwnerId,
   createShop,
   updateShop,
+  shopOwnedBy,
   getProductsByShop,
+  getAllProductsByShop,
   getProductById,
   createProduct,
   updateProduct,
   deleteProduct,
   searchInMarket,
-  createMarket,
   refreshMarketShopCount,
+  getDashboardStats,
+  getDataRevision,
+  slugify,
 };

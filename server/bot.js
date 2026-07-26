@@ -1,4 +1,13 @@
 const { Telegraf, Markup } = require('telegraf');
+const db = require('./db');
+const {
+  verifyPassword,
+  normalizePhone,
+  createOwnerToken,
+} = require('./auth');
+
+// telegramId -> { step: 'phone'|'password', phone? }
+const sessions = new Map();
 
 function createBot(token, webappUrl) {
   if (!token || token.includes('your_telegram')) {
@@ -6,81 +15,101 @@ function createBot(token, webappUrl) {
     return null;
   }
 
+  const baseUrl = webappUrl.replace(/\/$/, '');
   const bot = new Telegraf(token);
 
-  const openWebApp = (path = '') => {
-    const url = `${webappUrl.replace(/\/$/, '')}${path}`;
-    return Markup.keyboard([
-      [Markup.button.webApp('Bozorlarni ochish', url)],
-      ['Yordam', "Do'kon egasi bo'lish"],
-    ]).resize();
-  };
+  const appUrl = (path = '') => `${baseUrl}${path}`;
+
+  /** Faqat bitta tugma: bozorni ochish */
+  const onlyOpenKeyboard = (path = '', label = 'Bozorni ochish') =>
+    Markup.keyboard([[Markup.button.webApp(label, appUrl(path))]])
+      .resize()
+      .persistent();
+
+  const inlineOpen = (path = '', text = 'Bozorni ochish') =>
+    Markup.inlineKeyboard([[Markup.button.webApp(text, appUrl(path))]]);
+
+  async function setupMenuButton() {
+    try {
+      await bot.telegram.setChatMenuButton({
+        menuButton: {
+          type: 'web_app',
+          text: 'Bozor',
+          web_app: { url: appUrl() },
+        },
+      });
+      console.log('[bot] Menu button (WebApp) o‘rnatildi:', appUrl());
+    } catch (err) {
+      console.error('[bot] Menu button xato:', err.message);
+    }
+  }
 
   bot.start(async (ctx) => {
-    const name = ctx.from?.first_name || 'do\'st';
+    sessions.delete(String(ctx.from.id));
+    const name = ctx.from?.first_name || "do'st";
     await ctx.reply(
       `Assalomu alaykum, ${name}!\n\n` +
-      `Bu bot orqali katta bozorlardagi do'konlardan kerakli narsani topishingiz mumkin.\n\n` +
-      `Qanday ishlaydi:\n` +
-      `1. Bozorni tanlang (masalan, O'rikzor)\n` +
-      `2. Nima kerakligini yozing\n` +
-      `3. Qaysi do'konlarda borligi, narxi va telefoni chiqadi\n\n` +
-      `Pastdagi tugma orqali ilovani oching.`,
-      openWebApp()
+        `Katta bozorlardan kerakli narsani toping.\n` +
+        `Ilovani oching — u yerda xaridor yoki do'kon egasi ekaningizni tanlaysiz.`,
+      onlyOpenKeyboard()
     );
   });
 
   bot.command('app', async (ctx) => {
-    await ctx.reply('Bozor ilovasini ochish:', openWebApp());
+    await ctx.reply('Bozor ilovasini ochish:', onlyOpenKeyboard());
   });
 
   bot.command('help', async (ctx) => {
     await ctx.reply(
       `Yordam\n\n` +
-      `/start — botni boshlash\n` +
-      `/app — WebApp ni ochish\n` +
-      `/owner — do'kon egasi bo'lish haqida\n\n` +
-      `Xaridor: bozorni tanlang → qidiruvga yozing → do'konlarni ko'ring.\n` +
-      `Do'kon egasi: WebApp da "Mening do'konim" → do'kon oching → mahsulot qo'shing.`
+        `«Bozorni ochish» tugmasini bosing.\n` +
+        `WebApp ichida: Xaridor yoki Do'kon egasi.\n` +
+        `Do'kon egasi: superadmin bergan telefon + parol.`
     );
   });
 
-  bot.hears('Yordam', async (ctx) => {
-    await ctx.reply(
-      `Qidiruv: bozorga kiring va "olma", "guruch", "ko'ylak" kabi so'z yozing.\n` +
-      `Natijada do'kon nomi, manzil, telefon, mahsulot rasmi va narxi ko'rsatiladi.`
-    );
-  });
-
-  bot.hears("Do'kon egasi bo'lish", ownerHelp);
-  bot.command('owner', ownerHelp);
-
-  async function ownerHelp(ctx) {
-    await ctx.reply(
-      `Do'kon egasi bo'lish\n\n` +
-      `1. "Bozorlarni ochish" tugmasini bosing\n` +
-      `2. Pastki menyudan "Mening do'konim" ni tanlang\n` +
-      `3. Bozorni tanlab do'kon yarating\n` +
-      `4. Telefon, manzil va mahsulotlar (rasm + narx) qo'shing\n\n` +
-      `Keyin xaridorlar qidiruvda sizning tovarlaringizni topadi.`,
-      openWebApp('/#/owner')
-    );
-  }
+  // Eski klaviatura matnlari — faqat ochishga yo'naltirish
+  bot.hears(
+    [
+      '🛒 Xaridorman',
+      "🏪 Do'kon egasiman",
+      'Yordam',
+      '🔄 Rolni almashtirish',
+      '❌ Bekor qilish',
+      "Do'kon egasi bo'lish",
+    ],
+    async (ctx) => {
+      sessions.delete(String(ctx.from.id));
+      await ctx.reply('Ilovani oching:', onlyOpenKeyboard());
+    }
+  );
 
   bot.on('text', async (ctx) => {
-    // Soft redirect to webapp for free text
-    const text = ctx.message?.text || '';
+    const text = (ctx.message?.text || '').trim();
     if (text.startsWith('/')) return;
-    await ctx.reply(
-      `Qidiruvni WebApp orqali qiling — bozorni tanlab, kerakli narsani yozing.`,
-      openWebApp()
-    );
+
+    // Agar oldingi sessiyada egasi login qilayotgan bo'lsa (ixtiyoriy saqlab qoldik)
+    const tid = String(ctx.from.id);
+    const sess = sessions.get(tid);
+    if (sess?.step === 'phone' || sess?.step === 'password') {
+      // WebApp orqali kirishga yo'naltiramiz
+      sessions.delete(tid);
+      await ctx.reply(
+        "Do'kon egasi kirishi WebApp ichida.\nIlovani oching va «Do'kon egasiman» ni tanlang.",
+        onlyOpenKeyboard()
+      );
+      return;
+    }
+
+    await ctx.reply('Bozorni ochish tugmasini bosing:', onlyOpenKeyboard());
   });
 
   bot.catch((err, ctx) => {
     console.error(`[bot] xato ${ctx.updateType}:`, err);
   });
 
+  bot.setupMenuButton = setupMenuButton;
+  bot.webappUrl = baseUrl;
   return bot;
 }
 

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Superadmin — Bozor Top</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/admin/admin.css?v=2" />
+</head>
+<body>
+  <div id="login-view" class="login-wrap">
+    <form class="login-card" id="login-form">
+      <div class="badge">SUPERADMIN</div>
+      <h1>Bozor boshqaruvi</h1>
+      <p class="muted">Faqat localhost. Parolni kiriting.</p>
+      <label>Parol</label>
+      <input type="password" id="login-password" placeholder="Superadmin paroli" autocomplete="current-password" required />
+      <button type="submit" class="btn primary">Kirish</button>
+      <p class="error" id="login-error" hidden></p>
+    </form>
+  </div>
+
+  <div id="app-view" class="app hidden">
+    <aside class="sidebar">
+      <div class="brand">Bozor Top</div>
+      <nav>
+        <button type="button" class="nav active" data-tab="dashboard">Dashboard</button>
+        <button type="button" class="nav" data-tab="markets">Bozorlar</button>
+        <button type="button" class="nav" data-tab="shops">Do'konlar</button>
+        <button type="button" class="nav" data-tab="owners">Do'kon egalari</button>
+      </nav>
+      <button type="button" class="btn ghost logout" id="logout">Chiqish</button>
+    </aside>
+    <main class="content">
+      <header class="top">
+        <h2 id="page-title">Dashboard</h2>
+        <span class="pill">localhost only</span>
+      </header>
+      <div id="panel"></div>
+    </main>
+  </div>
+  <script src="/admin/admin.js?v=2"></script>
+</body>
+</html>

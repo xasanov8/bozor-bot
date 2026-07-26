@@ -1,9 +1,43 @@
 const express = require('express');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const db = require('../db');
 const { upload } = require('../middleware/upload');
+const {
+  getOwnerSession,
+  createOwnerToken,
+  verifyPassword,
+  normalizePhone,
+} = require('../auth');
 
 const router = express.Router();
+
+function getAppVersion() {
+  const files = [
+    path.join(__dirname, '..', '..', 'webapp', 'js', 'app.js'),
+    path.join(__dirname, '..', '..', 'webapp', 'css', 'style.css'),
+    path.join(__dirname, '..', '..', 'webapp', 'index.html'),
+    path.join(__dirname, '..', '..', 'webapp', 'admin', 'admin.js'),
+    path.join(__dirname, '..', '..', 'webapp', 'admin', 'admin.css'),
+    path.join(__dirname, '..', '..', 'webapp', 'admin', 'index.html'),
+    path.join(__dirname, '..', 'bot.js'),
+    path.join(__dirname, '..', 'index.js'),
+  ];
+  try {
+    return files
+      .map((f) => {
+        try {
+          return String(fs.statSync(f).mtimeMs);
+        } catch {
+          return '0';
+        }
+      })
+      .join('-');
+  } catch {
+    return String(Date.now());
+  }
+}
 
 function parseInitData(initData) {
   if (!initData || typeof initData !== 'string') return null;
@@ -56,7 +90,6 @@ function getTelegramUser(req) {
     const verified = verifyTelegramWebApp(initData, botToken);
     if (verified) return verified;
   }
-  // Dev fallback: allow soft parse without strict verify when token missing/dev
   if (process.env.NODE_ENV !== 'production') {
     return parseInitData(initData) || (req.headers['x-dev-user']
       ? { id: req.headers['x-dev-user'], first_name: 'Dev' }
@@ -65,19 +98,54 @@ function getTelegramUser(req) {
   return parseInitData(initData);
 }
 
-function requireUser(req, res, next) {
-  const user = getTelegramUser(req);
-  if (!user || !user.id) {
-    return res.status(401).json({ error: 'Telegram foydalanuvchisi aniqlanmadi. Bot orqali oching.' });
+function getBearer(req) {
+  const h = req.headers.authorization || '';
+  if (h.startsWith('Bearer ')) return h.slice(7);
+  return req.headers['x-owner-token'] || null;
+}
+
+/** Owner token OR telegram (linked owner / legacy shop owner) */
+function requireOwner(req, res, next) {
+  const token = getBearer(req);
+  const session = getOwnerSession(token);
+  if (session) {
+    const owner = db.getOwnerById(session.ownerId);
+    if (!owner || !owner.is_active) {
+      return res.status(401).json({ error: 'Sessiya yaroqsiz' });
+    }
+    req.owner = owner;
+    req.identity = { ownerId: owner.id, telegramId: owner.telegram_id };
+    return next();
   }
-  req.tgUser = user;
-  db.upsertUser({
-    telegramId: user.id,
-    username: user.username,
-    firstName: user.first_name,
-    lastName: user.last_name,
+
+  const user = getTelegramUser(req);
+  if (user?.id) {
+    db.upsertUser({
+      telegramId: user.id,
+      username: user.username,
+      firstName: user.first_name,
+      lastName: user.last_name,
+    });
+    const owner = db.getOwnerByTelegramId(user.id);
+    if (owner) {
+      req.owner = owner;
+      req.identity = { ownerId: owner.id, telegramId: String(user.id) };
+      req.tgUser = user;
+      return next();
+    }
+    // legacy: shops by telegram without owner account
+    const shops = db.getShopsByOwnerTelegram(user.id);
+    if (shops.length) {
+      req.tgUser = user;
+      req.identity = { ownerId: null, telegramId: String(user.id) };
+      req.legacyOwner = true;
+      return next();
+    }
+  }
+
+  return res.status(401).json({
+    error: "Do'kon egasi sifatida kiring (bot orqali telefon va parol).",
   });
-  next();
 }
 
 // ——— Public ———
@@ -86,20 +154,30 @@ router.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'bozor-bot' });
 });
 
+/** Live update: app (kod) + data (DB) versiyalari */
+router.get('/version', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    app: getAppVersion(),
+    data: db.getDataRevision(),
+    ts: Date.now(),
+  });
+});
+
 router.get('/markets', (_req, res) => {
   res.json({ markets: db.getMarkets() });
 });
 
 router.get('/markets/:id', (req, res) => {
   const market = db.getMarketById(Number(req.params.id));
-  if (!market) return res.status(404).json({ error: 'Bozor topilmadi' });
+  if (!market || !market.is_active) return res.status(404).json({ error: 'Bozor topilmadi' });
   const shops = db.getShopsByMarket(market.id);
   res.json({ market, shops });
 });
 
 router.get('/markets/:id/search', (req, res) => {
   const market = db.getMarketById(Number(req.params.id));
-  if (!market) return res.status(404).json({ error: 'Bozor topilmadi' });
+  if (!market || !market.is_active) return res.status(404).json({ error: 'Bozor topilmadi' });
   const q = String(req.query.q || '').trim();
   if (!q) return res.json({ query: q, results: [] });
   const results = db.searchInMarket(market.id, q);
@@ -108,7 +186,7 @@ router.get('/markets/:id/search', (req, res) => {
 
 router.get('/shops/:id', (req, res) => {
   const shop = db.getShopById(Number(req.params.id));
-  if (!shop) return res.status(404).json({ error: "Do'kon topilmadi" });
+  if (!shop || !shop.is_active) return res.status(404).json({ error: "Do'kon topilmadi" });
   const products = db.getProductsByShop(shop.id);
   res.json({ shop, products });
 });
@@ -119,21 +197,70 @@ router.get('/products/:id', (req, res) => {
   res.json({ product });
 });
 
-// ——— Owner (auth) ———
+// ——— Owner login (phone + password) — also used by bot backend logic ———
 
-router.get('/me', requireUser, (req, res) => {
-  const shops = db.getShopsByOwner(req.tgUser.id);
+router.post('/owner/login', (req, res) => {
+  try {
+    const phone = normalizePhone(req.body?.phone);
+    const password = req.body?.password;
+    const telegramId = req.body?.telegramId ? String(req.body.telegramId) : null;
+
+    if (!phone || !password) {
+      return res.status(400).json({ error: 'Telefon va parol majburiy' });
+    }
+
+    const owner = db.getOwnerByPhone(phone);
+    if (!owner || !verifyPassword(password, owner.password_hash)) {
+      return res.status(401).json({ error: "Telefon yoki parol noto'g'ri" });
+    }
+
+    if (telegramId) {
+      db.linkOwnerTelegram(owner.id, telegramId);
+      db.upsertUser({
+        telegramId,
+        role: 'owner',
+        firstName: owner.name,
+      });
+    }
+
+    const fresh = db.getOwnerById(owner.id);
+    const token = createOwnerToken(fresh);
+    const shops = db.getShopsByOwnerId(fresh.id);
+
+    res.json({
+      token,
+      owner: db.publicOwner(fresh),
+      shops,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ——— Owner panel ———
+
+router.get('/me', requireOwner, (req, res) => {
+  let shops = [];
+  if (req.owner) {
+    shops = db.getShopsByOwnerId(req.owner.id);
+  } else if (req.tgUser) {
+    shops = db.getShopsByOwnerTelegram(req.tgUser.id);
+  }
+
   res.json({
-    user: {
-      id: req.tgUser.id,
-      username: req.tgUser.username,
-      first_name: req.tgUser.first_name,
-    },
+    user: req.owner
+      ? { id: req.owner.id, name: req.owner.name, phone: req.owner.phone, role: 'owner' }
+      : {
+          id: req.tgUser?.id,
+          first_name: req.tgUser?.first_name,
+          username: req.tgUser?.username,
+          role: 'owner',
+        },
     shops,
   });
 });
 
-router.post('/shops', requireUser, upload.single('image'), (req, res) => {
+router.post('/shops', requireOwner, upload.single('image'), (req, res) => {
   try {
     const { marketId, name, phone, address, description } = req.body;
     if (!marketId || !name || !phone || !address) {
@@ -147,9 +274,10 @@ router.post('/shops', requireUser, upload.single('image'), (req, res) => {
     const imageUrl = req.file ? `/uploads/${req.file.filename}` : null;
     const shop = db.createShop({
       marketId: Number(marketId),
-      ownerTelegramId: req.tgUser.id,
+      ownerId: req.owner?.id || null,
+      ownerTelegramId: req.identity.telegramId || req.tgUser?.id || null,
       name: String(name).trim(),
-      phone: String(phone).trim(),
+      phone: normalizePhone(phone),
       address: String(address).trim(),
       description: description ? String(description).trim() : null,
       imageUrl,
@@ -161,16 +289,16 @@ router.post('/shops', requireUser, upload.single('image'), (req, res) => {
   }
 });
 
-router.patch('/shops/:id', requireUser, upload.single('image'), (req, res) => {
+router.patch('/shops/:id', requireOwner, upload.single('image'), (req, res) => {
   try {
     const data = {
       name: req.body.name,
-      phone: req.body.phone,
+      phone: req.body.phone ? normalizePhone(req.body.phone) : undefined,
       address: req.body.address,
       description: req.body.description,
       imageUrl: req.file ? `/uploads/${req.file.filename}` : undefined,
     };
-    const shop = db.updateShop(Number(req.params.id), req.tgUser.id, data);
+    const shop = db.updateShop(Number(req.params.id), req.identity, data);
     if (!shop) return res.status(404).json({ error: "Do'kon topilmadi yoki ruxsat yo'q" });
     res.json({ shop });
   } catch (err) {
@@ -178,14 +306,14 @@ router.patch('/shops/:id', requireUser, upload.single('image'), (req, res) => {
   }
 });
 
-router.post('/products', requireUser, upload.single('image'), (req, res) => {
+router.post('/products', requireOwner, upload.single('image'), (req, res) => {
   try {
     const { shopId, name, description, price, unit } = req.body;
     if (!shopId || !name || price === undefined || price === '') {
       return res.status(400).json({ error: "Do'kon, nom va narx majburiy" });
     }
     const shop = db.getShopById(Number(shopId));
-    if (!shop || String(shop.owner_telegram_id) !== String(req.tgUser.id)) {
+    if (!shop || !db.shopOwnedBy(shop, req.identity.telegramId, req.identity.ownerId)) {
       return res.status(403).json({ error: "Bu do'konga mahsulot qo'sha olmaysiz" });
     }
     const imageUrl = req.file ? `/uploads/${req.file.filename}` : null;
@@ -203,7 +331,7 @@ router.post('/products', requireUser, upload.single('image'), (req, res) => {
   }
 });
 
-router.patch('/products/:id', requireUser, upload.single('image'), (req, res) => {
+router.patch('/products/:id', requireOwner, upload.single('image'), (req, res) => {
   try {
     const data = {
       name: req.body.name,
@@ -213,7 +341,7 @@ router.patch('/products/:id', requireUser, upload.single('image'), (req, res) =>
       imageUrl: req.file ? `/uploads/${req.file.filename}` : undefined,
       isAvailable: req.body.isAvailable !== undefined ? Number(req.body.isAvailable) : undefined,
     };
-    const product = db.updateProduct(Number(req.params.id), req.tgUser.id, data);
+    const product = db.updateProduct(Number(req.params.id), req.identity, data);
     if (!product) return res.status(404).json({ error: "Mahsulot topilmadi yoki ruxsat yo'q" });
     res.json({ product });
   } catch (err) {
@@ -221,13 +349,12 @@ router.patch('/products/:id', requireUser, upload.single('image'), (req, res) =>
   }
 });
 
-router.delete('/products/:id', requireUser, (req, res) => {
-  const ok = db.deleteProduct(Number(req.params.id), req.tgUser.id);
+router.delete('/products/:id', requireOwner, (req, res) => {
+  const ok = db.deleteProduct(Number(req.params.id), req.identity);
   if (!ok) return res.status(404).json({ error: "Mahsulot topilmadi yoki ruxsat yo'q" });
   res.json({ ok: true });
 });
 
-// Error handler for multer
 router.use((err, _req, res, _next) => {
   if (err instanceof Error) {
     return res.status(400).json({ error: err.message });
