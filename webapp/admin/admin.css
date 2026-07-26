@@ -769,14 +769,21 @@ code {
   gap: 8px;
   padding-top: 10px;
   border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  position: sticky;
+  bottom: 0;
+  background: linear-gradient(180deg, rgba(16, 24, 40, 0.92), rgba(16, 24, 40, 0.98));
+  z-index: 2;
 }
 .support-compose input {
   flex: 1;
   margin: 0;
+  font-size: 16px;
 }
 .support-compose .btn {
   flex-shrink: 0;
   white-space: nowrap;
+  min-height: 44px;
 }
 .text-center { text-align: center; }
 

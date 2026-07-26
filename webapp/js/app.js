@@ -562,9 +562,14 @@
 
   // ——— Views ———
 
+  function setChatMode(on) {
+    view.classList.toggle('chat-mode', !!on);
+  }
+
   async function render() {
     const seq = ++renderSeq;
     const { name, params } = state.route;
+    setChatMode(false);
     view.innerHTML = `<div class="loading"><div class="spinner"></div><span>Yuklanmoqda...</span></div>`;
 
     try {
@@ -1757,26 +1762,24 @@
         if (!box) return true;
         return box.scrollHeight - box.scrollTop - box.clientHeight < 80;
       })();
+      setChatMode(true);
       view.innerHTML = `
-        <div class="support-intro form-card mb-12">
-          <h3 style="margin-bottom:6px;">Qo‘llab-quvvatlash</h3>
-          <p class="text-muted" style="font-size:0.88rem;margin:0;">
-            Muammo, savol yoki taklifingizni yozing. Superadmin javobi shu yerga <strong>jonli</strong> keladi — sahifani yangilash shart emas.
-          </p>
-        </div>
-        <div class="chat-box support-chat-box">
-          <div class="chat-messages" id="support-messages">
-            ${messages.length ? messages.map((m) => `
-              <div class="chat-bubble ${m.sender_role === 'user' ? 'me' : 'them'}" data-mid="${m.id}">
-                <div class="chat-meta">${m.sender_role === 'user' ? 'Siz' : 'Support'}</div>
-                <div>${escapeHtml(m.body)}</div>
-                <div class="chat-time">${escapeHtml((m.created_at || '').slice(11, 16))}</div>
-              </div>
-            `).join('') : '<p class="text-muted text-center">Birinchi xabaringizni yozing — superadmin darhol ko‘radi</p>'}
-          </div>
-          <div class="chat-input-row">
-            <input type="text" id="support-input" placeholder="Muammoingizni yozing..." maxlength="2000" value="${escapeHtml(draft)}" />
-            <button type="button" class="btn btn-primary" id="support-send">Yuborish</button>
+        <div class="chat-layout">
+          <p class="chat-hint">Muammo yoki savolingizni yozing. Superadmin javobi <strong>jonli</strong> keladi.</p>
+          <div class="chat-box">
+            <div class="chat-messages" id="support-messages">
+              ${messages.length ? messages.map((m) => `
+                <div class="chat-bubble ${m.sender_role === 'user' ? 'me' : 'them'}" data-mid="${m.id}">
+                  <div class="chat-meta">${m.sender_role === 'user' ? 'Siz' : 'Support'}</div>
+                  <div>${escapeHtml(m.body)}</div>
+                  <div class="chat-time">${escapeHtml((m.created_at || '').slice(11, 16))}</div>
+                </div>
+              `).join('') : '<p class="text-muted text-center">Birinchi xabaringizni yozing — superadmin darhol ko‘radi</p>'}
+            </div>
+            <div class="chat-input-row">
+              <input type="text" id="support-input" placeholder="Muammoingizni yozing..." maxlength="2000" value="${escapeHtml(draft)}" autocomplete="off" />
+              <button type="button" class="btn btn-primary" id="support-send">Yuborish</button>
+            </div>
           </div>
         </div>
       `;
@@ -1912,20 +1915,23 @@
         if (!box) return true;
         return box.scrollHeight - box.scrollTop - box.clientHeight < 80;
       })();
+      setChatMode(true);
       view.innerHTML = `
-        <div class="chat-box">
-          <div class="chat-messages" id="chat-messages">
-            ${messages.length ? messages.map((m) => `
-              <div class="chat-bubble ${m.sender_role === 'buyer' ? 'me' : 'them'}" data-mid="${m.id}">
-                <div class="chat-meta">${m.sender_role === 'buyer' ? 'Siz' : "Do'kon"}</div>
-                <div>${escapeHtml(m.body)}</div>
-                <div class="chat-time">${escapeHtml((m.created_at || '').slice(11, 16))}</div>
-              </div>
-            `).join('') : '<p class="text-muted text-center">Xabar yozing — do\'kon egasi darhol ko\'radi</p>'}
-          </div>
-          <div class="chat-input-row">
-            <input type="text" id="chat-input" placeholder="Xabar..." maxlength="1000" value="${escapeHtml(draft)}" />
-            <button type="button" class="btn btn-primary" id="chat-send">Yuborish</button>
+        <div class="chat-layout">
+          <div class="chat-box">
+            <div class="chat-messages" id="chat-messages">
+              ${messages.length ? messages.map((m) => `
+                <div class="chat-bubble ${m.sender_role === 'buyer' ? 'me' : 'them'}" data-mid="${m.id}">
+                  <div class="chat-meta">${m.sender_role === 'buyer' ? 'Siz' : "Do'kon"}</div>
+                  <div>${escapeHtml(m.body)}</div>
+                  <div class="chat-time">${escapeHtml((m.created_at || '').slice(11, 16))}</div>
+                </div>
+              `).join('') : '<p class="text-muted text-center">Xabar yozing — do\'kon egasi darhol ko\'radi</p>'}
+            </div>
+            <div class="chat-input-row">
+              <input type="text" id="chat-input" placeholder="Xabar..." maxlength="1000" value="${escapeHtml(draft)}" autocomplete="off" />
+              <button type="button" class="btn btn-primary" id="chat-send">Yuborish</button>
+            </div>
           </div>
         </div>
       `;
@@ -2057,20 +2063,23 @@
         if (!box) return true;
         return box.scrollHeight - box.scrollTop - box.clientHeight < 80;
       })();
+      setChatMode(true);
       view.innerHTML = `
-        <div class="chat-box">
-          <div class="chat-messages" id="ochat-messages">
-            ${messages.map((m) => `
-              <div class="chat-bubble ${m.sender_role === 'owner' ? 'me' : 'them'}">
-                <div class="chat-meta">${m.sender_role === 'owner' ? 'Siz' : 'Xaridor'}</div>
-                <div>${escapeHtml(m.body)}</div>
-                <div class="chat-time">${escapeHtml((m.created_at || '').slice(11, 16))}</div>
-              </div>
-            `).join('')}
-          </div>
-          <div class="chat-input-row">
-            <input type="text" id="ochat-input" placeholder="Javob..." maxlength="1000" value="${escapeHtml(draft)}" />
-            <button type="button" class="btn btn-primary" id="ochat-send">Yuborish</button>
+        <div class="chat-layout">
+          <div class="chat-box">
+            <div class="chat-messages" id="ochat-messages">
+              ${messages.map((m) => `
+                <div class="chat-bubble ${m.sender_role === 'owner' ? 'me' : 'them'}">
+                  <div class="chat-meta">${m.sender_role === 'owner' ? 'Siz' : 'Xaridor'}</div>
+                  <div>${escapeHtml(m.body)}</div>
+                  <div class="chat-time">${escapeHtml((m.created_at || '').slice(11, 16))}</div>
+                </div>
+              `).join('')}
+            </div>
+            <div class="chat-input-row">
+              <input type="text" id="ochat-input" placeholder="Javob..." maxlength="1000" value="${escapeHtml(draft)}" autocomplete="off" />
+              <button type="button" class="btn btn-primary" id="ochat-send">Yuborish</button>
+            </div>
           </div>
         </div>
       `;
