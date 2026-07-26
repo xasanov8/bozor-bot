@@ -416,6 +416,99 @@ router.post('/owner/chats/:id/reply', requireOwner, (req, res) => {
   }
 });
 
+// ——— Support (foydalanuvchi ↔ superadmin) ———
+
+function getSupportIdentity(req) {
+  const tg = getTelegramUser(req);
+  if (tg?.id) {
+    const name = [tg.first_name, tg.last_name].filter(Boolean).join(' ') || tg.username || null;
+    // owner token + telegram — rolni aniqlash
+    const token = getBearer(req);
+    const session = token ? getOwnerSession(token) : null;
+    if (session) {
+      const owner = db.getOwnerById(session.ownerId);
+      return {
+        userKey: `tg:${tg.id}`,
+        userName: owner?.name || name,
+        userRole: 'owner',
+      };
+    }
+    return {
+      userKey: `tg:${tg.id}`,
+      userName: name,
+      userRole: 'buyer',
+    };
+  }
+
+  // Faqat owner token (telegram yo'q)
+  const token = getBearer(req);
+  const session = token ? getOwnerSession(token) : null;
+  if (session) {
+    const owner = db.getOwnerById(session.ownerId);
+    if (owner) {
+      return {
+        userKey: `owner:${owner.id}`,
+        userName: owner.name || owner.phone,
+        userRole: 'owner',
+      };
+    }
+  }
+
+  // Dev fallback
+  if (req.headers['x-dev-user']) {
+    return {
+      userKey: `tg:${req.headers['x-dev-user']}`,
+      userName: 'Dev',
+      userRole: 'buyer',
+    };
+  }
+  return null;
+}
+
+router.get('/support', (req, res) => {
+  const idn = getSupportIdentity(req);
+  if (!idn) return res.status(401).json({ error: 'Foydalanuvchi aniqlanmadi' });
+  let thread = features.getSupportThreadByUserKey(idn.userKey);
+  if (!thread) {
+    return res.json({ thread: null, messages: [] });
+  }
+  features.markSupportRead(thread.id, 'user');
+  thread = features.getSupportThreadById(thread.id);
+  res.json({
+    thread,
+    messages: features.getSupportMessages(thread.id),
+  });
+});
+
+router.get('/support/unread', (req, res) => {
+  const idn = getSupportIdentity(req);
+  if (!idn) return res.json({ total: 0, thread_id: null });
+  res.json(features.getUserSupportUnread(idn.userKey));
+});
+
+router.post('/support/send', (req, res) => {
+  try {
+    const idn = getSupportIdentity(req);
+    if (!idn) return res.status(401).json({ error: 'Foydalanuvchi aniqlanmadi' });
+    const result = features.sendSupportMessage({
+      userKey: idn.userKey,
+      userName: idn.userName,
+      userRole: idn.userRole,
+      senderRole: 'user',
+      senderId: idn.userKey,
+      body: req.body?.body,
+    });
+    features.markSupportRead(result.thread.id, 'user');
+    res.status(201).json({
+      message: result.message,
+      thread: features.getSupportThreadById(result.thread.id),
+      messages: features.getSupportMessages(result.thread.id),
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 router.get('/owner/reviews', requireOwner, (req, res) => {
   res.json({
     reviews: features.getOwnerReviews(req.owner?.id, req.identity?.telegramId || req.tgUser?.id),

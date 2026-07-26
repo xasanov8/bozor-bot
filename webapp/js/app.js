@@ -24,6 +24,7 @@
   let chatPollTimer = null;
   let unreadPollTimer = null;
   let lastUnreadSnapshot = '';
+  let lastSupportUnreadSnap = '';
 
   function stopChatPoll() {
     if (chatPollTimer) {
@@ -249,6 +250,7 @@
     }
     updateCartBadge();
     refreshChatBadge();
+    refreshSupportBadge();
   }
 
   btnChatTop?.addEventListener('click', () => {
@@ -292,11 +294,42 @@
     }
   }
 
+  async function refreshSupportBadge() {
+    const badge = $('#support-badge');
+    if (!badge) return;
+    if (!state.role || state.route?.name === 'role') {
+      badge.classList.add('hidden');
+      return;
+    }
+    try {
+      const data = await api('/support/unread');
+      const total = Number(data.total || 0);
+      badge.textContent = total > 99 ? '99+' : String(total);
+      badge.classList.toggle('hidden', total <= 0);
+      const snap = `${total}|${data.thread_id || ''}|${data.last_message || ''}`;
+      if (
+        lastSupportUnreadSnap &&
+        snap !== lastSupportUnreadSnap &&
+        total > 0 &&
+        state.route?.name !== 'support'
+      ) {
+        toast('Yordam: yangi javob keldi', 'success');
+      }
+      lastSupportUnreadSnap = snap;
+    } catch (_) {
+      badge.classList.add('hidden');
+    }
+  }
+
   function startUnreadPolling() {
     if (unreadPollTimer) clearInterval(unreadPollTimer);
     refreshChatBadge();
+    refreshSupportBadge();
     unreadPollTimer = setInterval(() => {
-      if (!document.hidden) refreshChatBadge();
+      if (!document.hidden) {
+        refreshChatBadge();
+        refreshSupportBadge();
+      }
     }, 3000);
   }
 
@@ -496,6 +529,8 @@
       } else if (route === 'owner') {
         if (state.role !== 'owner') setRole('owner');
         navigate('owner', {}, { push: false });
+      } else if (route === 'support') {
+        navigate('support', {}, { push: false });
       } else {
         if (state.role !== 'buyer') setRole('buyer');
         navigate('home', {}, { push: false });
@@ -545,6 +580,7 @@
       else if (name === 'chats') await renderChatsList();
       else if (name === 'owner-chats') await renderOwnerChatsList();
       else if (name === 'owner-chat') await renderOwnerChat(params.threadId);
+      else if (name === 'support') await renderSupport();
       else if (name === 'owner') await renderOwner();
       else if (name === 'owner-create') await renderOwnerCreate();
       else if (name === 'owner-shop') await renderOwnerShop(params.id);
@@ -1688,6 +1724,117 @@
         btn.textContent = 'Saqlash';
       }
     });
+  }
+
+  // ——— Support (foydalanuvchi ↔ superadmin) ———
+
+  async function renderSupport() {
+    if (!state.role) return navigate('role', {}, { push: false });
+    setNav('support');
+    setHeader('Yordam', 'Superadmin bilan jonli chat', false);
+    applyRoleChrome();
+    view.innerHTML = `<div class="loading"><div class="spinner"></div></div>`;
+
+    let thread = null;
+    let messages = [];
+    let lastMsgId = 0;
+
+    try {
+      const data = await api('/support');
+      thread = data.thread;
+      messages = data.messages || [];
+    } catch (err) {
+      view.innerHTML = `<div class="results-empty"><h4>Yordam ochilmadi</h4><p>${escapeHtml(err.message)}</p></div>`;
+      return;
+    }
+
+    lastMsgId = messages.length ? messages[messages.length - 1].id : 0;
+
+    function paint(keepInput = false) {
+      const draft = keepInput ? ($('#support-input')?.value || '') : '';
+      const nearBottom = (() => {
+        const box = $('#support-messages');
+        if (!box) return true;
+        return box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+      })();
+      view.innerHTML = `
+        <div class="support-intro form-card mb-12">
+          <h3 style="margin-bottom:6px;">Qo‘llab-quvvatlash</h3>
+          <p class="text-muted" style="font-size:0.88rem;margin:0;">
+            Muammo, savol yoki taklifingizni yozing. Superadmin javobi shu yerga <strong>jonli</strong> keladi — sahifani yangilash shart emas.
+          </p>
+        </div>
+        <div class="chat-box support-chat-box">
+          <div class="chat-messages" id="support-messages">
+            ${messages.length ? messages.map((m) => `
+              <div class="chat-bubble ${m.sender_role === 'user' ? 'me' : 'them'}" data-mid="${m.id}">
+                <div class="chat-meta">${m.sender_role === 'user' ? 'Siz' : 'Support'}</div>
+                <div>${escapeHtml(m.body)}</div>
+                <div class="chat-time">${escapeHtml((m.created_at || '').slice(11, 16))}</div>
+              </div>
+            `).join('') : '<p class="text-muted text-center">Birinchi xabaringizni yozing — superadmin darhol ko‘radi</p>'}
+          </div>
+          <div class="chat-input-row">
+            <input type="text" id="support-input" placeholder="Muammoingizni yozing..." maxlength="2000" value="${escapeHtml(draft)}" />
+            <button type="button" class="btn btn-primary" id="support-send">Yuborish</button>
+          </div>
+        </div>
+      `;
+      const box = $('#support-messages');
+      if (box && nearBottom) box.scrollTop = box.scrollHeight;
+      $('#support-send')?.addEventListener('click', send);
+      $('#support-input')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') send();
+      });
+      if (keepInput && draft) {
+        const inp = $('#support-input');
+        if (inp) {
+          inp.focus();
+          inp.selectionStart = inp.selectionEnd = inp.value.length;
+        }
+      }
+    }
+
+    async function send() {
+      const input = $('#support-input');
+      const body = (input?.value || '').trim();
+      if (!body) return;
+      try {
+        const data = await api('/support/send', {
+          method: 'POST',
+          body: { body },
+        });
+        thread = data.thread;
+        messages = data.messages || [];
+        lastMsgId = messages.length ? messages[messages.length - 1].id : lastMsgId;
+        paint(false);
+        refreshSupportBadge();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function poll() {
+      if (document.hidden) return;
+      if (state.route?.name !== 'support') return;
+      try {
+        const data = await api('/support');
+        const next = data.messages || [];
+        const maxId = next.length ? next[next.length - 1].id : 0;
+        if (maxId !== lastMsgId || next.length !== messages.length) {
+          messages = next;
+          thread = data.thread;
+          lastMsgId = maxId;
+          paint(true);
+          refreshSupportBadge();
+        }
+      } catch (_) { /* ignore */ }
+    }
+
+    stopChatPoll();
+    paint();
+    chatPollTimer = setInterval(poll, 2000);
+    refreshSupportBadge();
   }
 
   // ——— Chat (xaridor) ———

@@ -109,10 +109,35 @@
     });
   });
 
+  let supportPollTimer = null;
+  let supportSelectedId = null;
+  let supportLastMsgId = 0;
+  let supportLastListSnap = '';
+
+  function stopSupportPoll() {
+    if (supportPollTimer) {
+      clearInterval(supportPollTimer);
+      supportPollTimer = null;
+    }
+  }
+
+  async function refreshSupportBadge() {
+    const badge = document.getElementById('support-nav-badge');
+    if (!badge || !token) return;
+    try {
+      const data = await api('/support/unread');
+      const total = Number(data.total || 0);
+      badge.textContent = total > 99 ? '99+' : String(total);
+      badge.classList.toggle('hidden', total <= 0);
+    } catch (_) { /* ignore */ }
+  }
+
   async function render() {
+    stopSupportPoll();
     const titles = {
       dashboard: 'Dashboard',
       report: 'Hisobot',
+      support: 'Yordam',
       markets: 'Bozorlar',
       shops: "Do'konlar",
       owners: "Do'kon egalari",
@@ -120,6 +145,7 @@
     const kickers = {
       dashboard: 'Asosiy',
       report: 'Asosiy',
+      support: 'Asosiy',
       markets: 'Boshqaruv',
       shops: 'Boshqaruv',
       owners: 'Boshqaruv',
@@ -133,9 +159,11 @@
     try {
       if (tab === 'dashboard') await renderDashboard();
       else if (tab === 'report') await renderReport();
+      else if (tab === 'support') await renderSupport();
       else if (tab === 'markets') await renderMarkets();
       else if (tab === 'shops') await renderShops();
       else if (tab === 'owners') await renderOwners();
+      refreshSupportBadge();
     } catch (err) {
       if (String(err.message).includes('avtorizatsiya') || String(err.message).includes('401')) {
         token = '';
@@ -157,6 +185,11 @@
 
   async function renderDashboard() {
     const { stats } = await api('/stats');
+    let supportUnread = 0;
+    try {
+      const su = await api('/support/unread');
+      supportUnread = Number(su.total || 0);
+    } catch (_) {}
     panel.innerHTML = `
       <div class="stats">
         <div class="stat"><strong>${stats.markets}</strong><span>Bozor</span></div>
@@ -164,6 +197,12 @@
         <div class="stat"><strong>${stats.products}</strong><span>Mahsulot</span></div>
         <div class="stat"><strong>${stats.owners}</strong><span>Do'kon egasi</span></div>
       </div>
+      ${supportUnread > 0 ? `
+      <div class="card">
+        <h3>Yordam — yangi xabarlar</h3>
+        <p class="muted" style="margin-bottom:12px;"><strong style="color:var(--warn)">${supportUnread}</strong> ta o‘qilmagan support xabari.</p>
+        <button type="button" class="btn primary sm" data-go="support">Yordamga o‘tish</button>
+      </div>` : ''}
       <div class="card">
         <h3>Tezkor harakatlar</h3>
         <p class="muted" style="margin-bottom:12px;">Kerakli bo‘limga bir bosishda o‘ting.</p>
@@ -171,6 +210,7 @@
           <button type="button" class="btn secondary sm" data-go="markets">Bozorlar</button>
           <button type="button" class="btn secondary sm" data-go="shops">Do'konlar</button>
           <button type="button" class="btn secondary sm" data-go="owners">Do'kon egalari</button>
+          <button type="button" class="btn secondary sm" data-go="support">Yordam</button>
           <button type="button" class="btn secondary sm" data-go="report">Hisobot</button>
         </div>
       </div>
@@ -226,6 +266,192 @@
         </table></div>
       </div>
     `;
+  }
+
+  async function renderSupport() {
+    supportSelectedId = supportSelectedId || null;
+    supportLastMsgId = 0;
+    supportLastListSnap = '';
+
+    panel.innerHTML = `
+      <div class="support-layout">
+        <div class="card support-list-card">
+          <h3>Support so‘rovlar <span class="muted" id="support-live-dot" style="font-size:0.75rem;">· jonli</span></h3>
+          <p class="muted" style="margin-bottom:12px;">Foydalanuvchilar yozgan muammolar. Yangi xabarlar avtomatik keladi.</p>
+          <div id="support-thread-list" class="support-thread-list">
+            <p class="muted">Yuklanmoqda...</p>
+          </div>
+        </div>
+        <div class="card support-chat-card">
+          <div id="support-chat-head" class="support-chat-head">
+            <strong>Chat tanlang</strong>
+            <span class="muted">Chapdagi ro‘yxatdan foydalanuvchini tanlang</span>
+          </div>
+          <div class="support-messages" id="support-messages">
+            <p class="muted text-center" style="padding:24px 8px;">Hali chat ochilmagan</p>
+          </div>
+          <div class="support-compose" id="support-compose" hidden>
+            <input type="text" id="support-input" placeholder="Javob yozing..." maxlength="2000" />
+            <button type="button" class="btn primary" id="support-send">Yuborish</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const listEl = $('#support-thread-list');
+    const msgEl = $('#support-messages');
+    const headEl = $('#support-chat-head');
+    const compose = $('#support-compose');
+    const input = $('#support-input');
+    const sendBtn = $('#support-send');
+
+    function paintMessages(messages, keepInput = false) {
+      const draft = keepInput ? (input?.value || '') : '';
+      const nearBottom = (() => {
+        if (!msgEl) return true;
+        return msgEl.scrollHeight - msgEl.scrollTop - msgEl.clientHeight < 90;
+      })();
+      if (!messages.length) {
+        msgEl.innerHTML = '<p class="muted text-center" style="padding:24px 8px;">Xabar yo‘q — birinchi bo‘lib yozing</p>';
+      } else {
+        msgEl.innerHTML = messages.map((m) => `
+          <div class="support-bubble ${m.sender_role === 'admin' ? 'me' : 'them'}">
+            <div class="support-meta">${m.sender_role === 'admin' ? 'Siz (admin)' : 'Foydalanuvchi'}</div>
+            <div>${esc(m.body)}</div>
+            <div class="support-time">${esc((m.created_at || '').slice(0, 16))}</div>
+          </div>
+        `).join('');
+      }
+      if (nearBottom) msgEl.scrollTop = msgEl.scrollHeight;
+      if (keepInput && input) {
+        input.value = draft;
+        input.focus();
+        input.selectionStart = input.selectionEnd = input.value.length;
+      }
+    }
+
+    async function loadThread(id, keepInput = false) {
+      supportSelectedId = Number(id);
+      const data = await api(`/support/${supportSelectedId}`);
+      const t = data.thread;
+      const messages = data.messages || [];
+      supportLastMsgId = messages.length ? messages[messages.length - 1].id : 0;
+      headEl.innerHTML = `
+        <strong>${esc(t.user_name || t.user_key)}</strong>
+        <span class="muted">${esc(t.user_role || 'user')} · ${esc(t.user_key)} · ${esc((t.last_at || '').slice(0, 16))}</span>
+      `;
+      compose.hidden = false;
+      paintMessages(messages, keepInput);
+      // ro'yxatdagi active holat
+      listEl.querySelectorAll('[data-support-id]').forEach((btn) => {
+        btn.classList.toggle('active', Number(btn.dataset.supportId) === supportSelectedId);
+      });
+      refreshSupportBadge();
+    }
+
+    function paintList(threads) {
+      if (!threads.length) {
+        listEl.innerHTML = '<p class="muted">Hali support so‘rovi yo‘q</p>';
+        return;
+      }
+      listEl.innerHTML = threads.map((t) => {
+        const u = Number(t.unread || t.admin_unread || 0);
+        const active = Number(t.id) === Number(supportSelectedId);
+        return `
+          <button type="button" class="support-thread ${active ? 'active' : ''}" data-support-id="${t.id}">
+            <div class="support-thread-top">
+              <strong>${esc(t.user_name || t.user_key)}</strong>
+              ${u > 0 ? `<span class="chip-new">${u}</span>` : ''}
+            </div>
+            <div class="muted" style="font-size:0.78rem;">${esc(t.user_role || '')} · ${esc((t.last_at || '').slice(0, 16))}</div>
+            <div class="support-thread-preview">${esc(t.last_message || '')}</div>
+          </button>
+        `;
+      }).join('');
+      listEl.querySelectorAll('[data-support-id]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          try {
+            await loadThread(btn.dataset.supportId, false);
+          } catch (ex) {
+            alert(ex.message);
+          }
+        });
+      });
+    }
+
+    async function refreshList(selectFirst = false) {
+      const { threads } = await api('/support');
+      const snap = JSON.stringify((threads || []).map((t) => [t.id, t.admin_unread, t.last_message, t.last_at]));
+      if (snap !== supportLastListSnap) {
+        supportLastListSnap = snap;
+        paintList(threads || []);
+      }
+      if (selectFirst && !supportSelectedId && threads?.length) {
+        await loadThread(threads[0].id, false);
+      } else if (supportSelectedId && threads?.some((t) => Number(t.id) === Number(supportSelectedId))) {
+        // keep selection class
+        listEl.querySelectorAll('[data-support-id]').forEach((btn) => {
+          btn.classList.toggle('active', Number(btn.dataset.supportId) === Number(supportSelectedId));
+        });
+      }
+      return threads || [];
+    }
+
+    async function pollSupport() {
+      if (document.hidden || tab !== 'support') return;
+      if (document.activeElement === input) {
+        // yozayotganda faqat yangi xabarlarni nozik yangilash
+      }
+      try {
+        await refreshList(false);
+        if (supportSelectedId) {
+          const data = await api(`/support/${supportSelectedId}`);
+          const next = data.messages || [];
+          const maxId = next.length ? next[next.length - 1].id : 0;
+          if (maxId !== supportLastMsgId || next.length !== (msgEl.querySelectorAll('.support-bubble').length)) {
+            supportLastMsgId = maxId;
+            const head = data.thread;
+            headEl.innerHTML = `
+              <strong>${esc(head.user_name || head.user_key)}</strong>
+              <span class="muted">${esc(head.user_role || 'user')} · ${esc(head.user_key)} · ${esc((head.last_at || '').slice(0, 16))}</span>
+            `;
+            paintMessages(next, true);
+          }
+        }
+        refreshSupportBadge();
+      } catch (_) { /* ignore */ }
+    }
+
+    sendBtn?.addEventListener('click', async () => {
+      const body = (input?.value || '').trim();
+      if (!body || !supportSelectedId) return;
+      try {
+        const data = await api(`/support/${supportSelectedId}/reply`, {
+          method: 'POST',
+          body: { body },
+        });
+        input.value = '';
+        const messages = data.messages || [];
+        supportLastMsgId = messages.length ? messages[messages.length - 1].id : supportLastMsgId;
+        paintMessages(messages, false);
+        supportLastListSnap = '';
+        await refreshList(false);
+      } catch (ex) {
+        alert(ex.message);
+      }
+    });
+    input?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendBtn?.click();
+    });
+
+    try {
+      await refreshList(true);
+    } catch (ex) {
+      listEl.innerHTML = `<p class="error">${esc(ex.message)}</p>`;
+    }
+
+    stopSupportPoll();
+    supportPollTimer = setInterval(pollSupport, 2000);
   }
 
   async function renderMarkets() {
@@ -766,9 +992,14 @@
 
       if (ver.data !== liveDataRev) {
         liveDataRev = ver.data;
-        // Joriy tabni qayta chizish (to'liq sahifa refresh yo'q)
-        await render();
+        // Support ochiq bo'lsa o'z polleri yangilaydi — to'liq re-render shart emas
+        if (tab === 'support') {
+          refreshSupportBadge();
+        } else {
+          await render();
+        }
       }
+      refreshSupportBadge();
     } catch (_) {
       /* ignore */
     } finally {

@@ -218,4 +218,44 @@ router.post('/owners', requireAdmin, (req, res) => {
   }
 });
 
+// ——— Support (superadmin ↔ foydalanuvchi) ———
+
+router.get('/support/unread', requireAdmin, (_req, res) => {
+  res.json(features.getAdminSupportUnreadSummary());
+});
+
+router.get('/support', requireAdmin, (_req, res) => {
+  res.json({ threads: features.listSupportThreads() });
+});
+
+router.get('/support/:id', requireAdmin, (req, res) => {
+  const thread = features.getSupportThreadById(Number(req.params.id));
+  if (!thread) return res.status(404).json({ error: 'Support chat topilmadi' });
+  features.markSupportRead(thread.id, 'admin');
+  const fresh = features.getSupportThreadById(thread.id);
+  res.json({
+    thread: fresh,
+    messages: features.getSupportMessages(thread.id),
+  });
+});
+
+router.post('/support/:id/reply', requireAdmin, (req, res) => {
+  try {
+    const result = features.sendSupportMessage({
+      senderRole: 'admin',
+      senderId: 'superadmin',
+      body: req.body?.body,
+      threadId: Number(req.params.id),
+    });
+    features.markSupportRead(result.thread.id, 'admin');
+    res.status(201).json({
+      message: result.message,
+      thread: features.getSupportThreadById(result.thread.id),
+      messages: features.getSupportMessages(result.thread.id),
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 module.exports = router;

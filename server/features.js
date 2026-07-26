@@ -109,6 +109,32 @@ function migrateFeatures() {
     CREATE INDEX IF NOT EXISTS idx_chat_threads_shop ON chat_threads(shop_id);
     CREATE INDEX IF NOT EXISTS idx_chat_threads_buyer ON chat_threads(buyer_telegram_id);
     CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(thread_id);
+
+    CREATE TABLE IF NOT EXISTS support_threads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_key TEXT NOT NULL UNIQUE,
+      user_name TEXT,
+      user_role TEXT DEFAULT 'buyer',
+      last_message TEXT,
+      last_at TEXT DEFAULT (datetime('now')),
+      user_unread INTEGER DEFAULT 0,
+      admin_unread INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'open',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS support_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      thread_id INTEGER NOT NULL,
+      sender_role TEXT NOT NULL,
+      sender_id TEXT,
+      body TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (thread_id) REFERENCES support_threads(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_support_messages_thread ON support_messages(thread_id);
+    CREATE INDEX IF NOT EXISTS idx_support_threads_last ON support_threads(last_at);
   `);
 
   // Sharxga egasi javobi
@@ -667,6 +693,128 @@ function getThreadById(id) {
   `).get(id);
 }
 
+// ——— Support (foydalanuvchi ↔ superadmin) ———
+
+function getOrCreateSupportThread(userKey, userName, userRole) {
+  const key = String(userKey);
+  let t = db.prepare('SELECT * FROM support_threads WHERE user_key = ?').get(key);
+  if (t) {
+    if (userName && userName !== t.user_name) {
+      db.prepare('UPDATE support_threads SET user_name = ? WHERE id = ?').run(userName, t.id);
+      t = db.prepare('SELECT * FROM support_threads WHERE id = ?').get(t.id);
+    }
+    return t;
+  }
+  const r = db.prepare(`
+    INSERT INTO support_threads (user_key, user_name, user_role)
+    VALUES (?, ?, ?)
+  `).run(key, userName || null, userRole || 'buyer');
+  return db.prepare('SELECT * FROM support_threads WHERE id = ?').get(r.lastInsertRowid);
+}
+
+function getSupportThreadById(id) {
+  return db.prepare('SELECT * FROM support_threads WHERE id = ?').get(id);
+}
+
+function getSupportThreadByUserKey(userKey) {
+  return db.prepare('SELECT * FROM support_threads WHERE user_key = ?').get(String(userKey));
+}
+
+function getSupportMessages(threadId, limit = 200) {
+  return db.prepare(`
+    SELECT * FROM support_messages WHERE thread_id = ? ORDER BY id ASC LIMIT ?
+  `).all(threadId, limit);
+}
+
+function sendSupportMessage({ userKey, userName, userRole, senderRole, senderId, body, threadId }) {
+  const text = String(body || '').trim().slice(0, 2000);
+  if (!text) throw new Error('Xabar bo‘sh');
+  if (!['user', 'admin'].includes(senderRole)) throw new Error('Noto‘g‘ri yuboruvchi');
+
+  let thread;
+  if (senderRole === 'admin') {
+    thread = getSupportThreadById(Number(threadId));
+    if (!thread) throw new Error('Support chat topilmadi');
+  } else {
+    if (!userKey) throw new Error('Foydalanuvchi aniqlanmadi');
+    thread = getOrCreateSupportThread(userKey, userName, userRole);
+  }
+
+  const ins = db.prepare(`
+    INSERT INTO support_messages (thread_id, sender_role, sender_id, body)
+    VALUES (?, ?, ?, ?)
+  `).run(thread.id, senderRole, senderId ? String(senderId) : null, text);
+
+  if (senderRole === 'user') {
+    db.prepare(`
+      UPDATE support_threads SET
+        last_message = ?,
+        last_at = datetime('now'),
+        user_name = COALESCE(?, user_name),
+        user_role = COALESCE(?, user_role),
+        admin_unread = COALESCE(admin_unread, 0) + 1,
+        status = 'open'
+      WHERE id = ?
+    `).run(text, userName || null, userRole || null, thread.id);
+  } else {
+    db.prepare(`
+      UPDATE support_threads SET
+        last_message = ?,
+        last_at = datetime('now'),
+        user_unread = COALESCE(user_unread, 0) + 1,
+        status = 'open'
+      WHERE id = ?
+    `).run(text, thread.id);
+  }
+
+  return {
+    message: db.prepare('SELECT * FROM support_messages WHERE id = ?').get(ins.lastInsertRowid),
+    thread: getSupportThreadById(thread.id),
+  };
+}
+
+function markSupportRead(threadId, role) {
+  if (role === 'user') {
+    db.prepare('UPDATE support_threads SET user_unread = 0 WHERE id = ?').run(threadId);
+  } else if (role === 'admin') {
+    db.prepare('UPDATE support_threads SET admin_unread = 0 WHERE id = ?').run(threadId);
+  }
+}
+
+function listSupportThreads() {
+  return db.prepare(`
+    SELECT *,
+      COALESCE(admin_unread, 0) AS unread
+    FROM support_threads
+    ORDER BY COALESCE(admin_unread, 0) DESC, last_at DESC
+  `).all();
+}
+
+function getUserSupportUnread(userKey) {
+  const t = getSupportThreadByUserKey(userKey);
+  if (!t) return { total: 0, thread_id: null };
+  return {
+    total: Number(t.user_unread || 0),
+    thread_id: t.id,
+    last_message: t.last_message,
+  };
+}
+
+function getAdminSupportUnreadSummary() {
+  const row = db.prepare(`
+    SELECT
+      COALESCE(SUM(admin_unread), 0) AS total,
+      COUNT(*) AS threads,
+      COUNT(CASE WHEN COALESCE(admin_unread,0) > 0 THEN 1 END) AS open_unread
+    FROM support_threads
+  `).get();
+  return {
+    total: Number(row.total || 0),
+    threads: Number(row.threads || 0),
+    open_unread: Number(row.open_unread || 0),
+  };
+}
+
 function updateShopHours(shopId, identity, { workOpen, workClose, workDays }) {
   const shop = dbModule.getShopById(shopId);
   if (!shop || !dbModule.shopOwnedBy(shop, identity.telegramId, identity.ownerId)) return null;
@@ -819,9 +967,19 @@ dbModule.getDataRevision = function getDataRevision() {
       (SELECT COUNT(*) FROM reviews) AS rc,
       (SELECT COALESCE(MAX(id),0) FROM orders) AS om,
       (SELECT COALESCE(MAX(id),0) FROM reviews) AS rm,
-      (SELECT COUNT(*) FROM products WHERE moderation_status = 'pending') AS pend
+      (SELECT COUNT(*) FROM products WHERE moderation_status = 'pending') AS pend,
+      (SELECT COALESCE(MAX(id),0) FROM chat_messages) AS cm,
+      (SELECT COALESCE(MAX(id),0) FROM support_messages) AS sm,
+      (SELECT COALESCE(SUM(admin_unread),0) FROM support_threads) AS sau,
+      (SELECT COALESCE(SUM(user_unread),0) FROM support_threads) AS suu,
+      (SELECT COALESCE(SUM(buyer_unread),0) FROM chat_threads) AS cbu,
+      (SELECT COALESCE(SUM(owner_unread),0) FROM chat_threads) AS cou
   `).get();
-  return `${base}|${extra.oc}|${extra.rc}|${extra.om}|${extra.rm}|${extra.pend}`;
+  return [
+    base,
+    extra.oc, extra.rc, extra.om, extra.rm, extra.pend,
+    extra.cm, extra.sm, extra.sau, extra.suu, extra.cbu, extra.cou,
+  ].join('|');
 };
 
 module.exports = {
@@ -853,6 +1011,15 @@ module.exports = {
   getOwnerUnreadSummary,
   getThreadById,
   getOrCreateThread,
+  getOrCreateSupportThread,
+  getSupportThreadById,
+  getSupportThreadByUserKey,
+  getSupportMessages,
+  sendSupportMessage,
+  markSupportRead,
+  listSupportThreads,
+  getUserSupportUnread,
+  getAdminSupportUnreadSummary,
   updateShopHours,
   setProductPromo,
   getOwnerStats,

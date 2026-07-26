@@ -1217,6 +1217,16 @@ img {
   outline: none;
 }
 
+.support-intro h3 {
+  font-family: var(--display, inherit);
+  font-size: 1.05rem;
+}
+.support-chat-box {
+  height: calc(100vh - 260px);
+  min-height: 320px;
+}
+.mb-12 { margin-bottom: 12px; }
+
 .chat-icon-btn {
   position: relative;
 }

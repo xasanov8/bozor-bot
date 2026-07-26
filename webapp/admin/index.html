@@ -7,7 +7,7 @@
   <title>Superadmin — Bozor Top</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/admin/admin.css?v=9" />
+  <link rel="stylesheet" href="/admin/admin.css?v=10" />
 </head>
 <body>
   <div id="login-view" class="login-wrap">
@@ -83,6 +83,16 @@
               <span class="nav-desc">Statistika va top</span>
             </span>
           </button>
+          <button type="button" class="nav" data-tab="support">
+            <span class="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 9h8"/><path d="M8 13h5"/></svg>
+            </span>
+            <span class="nav-copy">
+              <span class="nav-title">Yordam</span>
+              <span class="nav-desc">Support chat</span>
+            </span>
+            <em class="nav-badge hidden" id="support-nav-badge">0</em>
+          </button>
         </nav>
       </div>
 
@@ -136,6 +146,6 @@
       <div id="panel"></div>
     </main>
   </div>
-  <script src="/admin/admin.js?v=9"></script>
+  <script src="/admin/admin.js?v=10"></script>
 </body>
 </html>
