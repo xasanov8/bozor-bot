@@ -411,6 +411,7 @@
   }
 
   function toast(msg, type = '') {
+    if (!toastEl) return;
     toastEl.textContent = msg;
     toastEl.className = 'toast show' + (type ? ` ${type}` : '');
     toastEl.hidden = false;
@@ -500,9 +501,9 @@
   // ——— Router ———
 
   function setHeader(title, sub, showBack = false) {
-    pageTitle.textContent = title;
-    pageSub.textContent = sub || '';
-    btnBack.classList.toggle('hidden', !showBack);
+    if (pageTitle) pageTitle.textContent = title;
+    if (pageSub) pageSub.textContent = sub || '';
+    if (btnBack) btnBack.classList.toggle('hidden', !showBack);
   }
 
   function setNav(active) {
@@ -532,7 +533,7 @@
     return navigate('home', {}, { push: false });
   }
 
-  btnBack.addEventListener('click', goBack);
+  btnBack?.addEventListener('click', goBack);
 
   document.querySelectorAll('.nav-item').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -593,10 +594,12 @@
   // ——— Views ———
 
   function setChatMode(on) {
+    if (!view) return;
     view.classList.toggle('chat-mode', !!on);
   }
 
   async function render() {
+    if (!view) return;
     const seq = ++renderSeq;
     const { name, params } = state.route;
     setChatMode(false);

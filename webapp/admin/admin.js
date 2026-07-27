@@ -6,6 +6,15 @@
 
   const t = (key, vars) => (window.AdminI18N ? window.AdminI18N.t(key, vars) : key);
 
+  /** Chart.js instances — render boshida tozalanadi */
+  let reportCharts = [];
+  function destroyReportCharts() {
+    (reportCharts || []).forEach((c) => {
+      try { c.destroy(); } catch (_) { /* ignore */ }
+    });
+    reportCharts = [];
+  }
+
   function syncLangButtons() {
     const lang = window.AdminI18N?.getLang?.() || 'uz';
     document.querySelectorAll('.lang-btn[data-lang]').forEach((btn) => {
@@ -66,25 +75,27 @@
     startLiveUpdates();
   }
 
-  $('#login-form').addEventListener('submit', async (e) => {
+  $('#login-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const err = $('#login-error');
-    err.hidden = true;
+    if (err) err.hidden = true;
     try {
       const data = await api('/login', {
         method: 'POST',
-        body: { password: $('#login-password').value },
+        body: { password: $('#login-password')?.value || '' },
       });
       token = data.token;
       localStorage.setItem(TOKEN_KEY, token);
       showApp();
     } catch (ex) {
-      err.textContent = ex.message;
-      err.hidden = false;
+      if (err) {
+        err.textContent = ex.message;
+        err.hidden = false;
+      }
     }
   });
 
-  $('#logout').addEventListener('click', () => {
+  $('#logout')?.addEventListener('click', () => {
     token = '';
     localStorage.removeItem(TOKEN_KEY);
     closeMenu();
@@ -257,15 +268,6 @@
     });
   }
 
-  let reportCharts = [];
-
-  function destroyReportCharts() {
-    reportCharts.forEach((c) => {
-      try { c.destroy(); } catch (_) {}
-    });
-    reportCharts = [];
-  }
-
   function waitForChartJs(timeoutMs = 4000) {
     return new Promise((resolve) => {
       if (window.Chart) return resolve(true);
@@ -405,146 +407,153 @@
       </div>
     `;
 
-    const ready = await waitForChartJs();
-    if (!ready || !window.Chart) return;
+    try {
+      const ready = await waitForChartJs();
+      if (!ready || !window.Chart) return;
 
-    const textColor = '#8b9bb8';
-    const gridColor = 'rgba(255,255,255,0.06)';
-    Chart.defaults.color = textColor;
-    Chart.defaults.font.family = '"DM Sans", system-ui, sans-serif';
-    Chart.defaults.borderColor = gridColor;
+      const textColor = '#8b9bb8';
+      const gridColor = 'rgba(255,255,255,0.06)';
+      try {
+        Chart.defaults.color = textColor;
+        Chart.defaults.font = Chart.defaults.font || {};
+        Chart.defaults.font.family = '"DM Sans", system-ui, sans-serif';
+        Chart.defaults.borderColor = gridColor;
+      } catch (_) { /* ignore defaults */ }
 
-    // Doughnut — tarkib
-    const compEl = document.getElementById('chart-composition');
-    if (compEl) {
-      reportCharts.push(new Chart(compEl, {
-        type: 'doughnut',
-        data: {
-          labels: [t('kpi_markets'), t('kpi_shops'), t('kpi_products'), t('kpi_owners'), t('kpi_promo')],
-          datasets: [{
-            data: [
-              Number(s.markets || 0),
-              Number(s.shops || 0),
-              Number(s.products || 0),
-              Number(s.owners || 0),
-              Number(s.promo_products || 0),
-            ],
-            backgroundColor: [
-              'rgba(34, 197, 94, 0.85)',
-              'rgba(56, 189, 248, 0.85)',
-              'rgba(167, 139, 250, 0.85)',
-              'rgba(251, 191, 36, 0.85)',
-              'rgba(244, 114, 182, 0.85)',
-            ],
-            borderColor: '#121a2b',
-            borderWidth: 3,
-            hoverOffset: 8,
-          }],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          cutout: '62%',
-          plugins: {
-            legend: {
-              position: 'bottom',
-              labels: { boxWidth: 12, padding: 14, usePointStyle: true },
+      // Doughnut — tarkib
+      const compEl = document.getElementById('chart-composition');
+      if (compEl) {
+        reportCharts.push(new Chart(compEl, {
+          type: 'doughnut',
+          data: {
+            labels: [t('kpi_markets'), t('kpi_shops'), t('kpi_products'), t('kpi_owners'), t('kpi_promo')],
+            datasets: [{
+              data: [
+                Number(s.markets || 0),
+                Number(s.shops || 0),
+                Number(s.products || 0),
+                Number(s.owners || 0),
+                Number(s.promo_products || 0),
+              ],
+              backgroundColor: [
+                'rgba(34, 197, 94, 0.85)',
+                'rgba(56, 189, 248, 0.85)',
+                'rgba(167, 139, 250, 0.85)',
+                'rgba(251, 191, 36, 0.85)',
+                'rgba(244, 114, 182, 0.85)',
+              ],
+              borderColor: '#121a2b',
+              borderWidth: 3,
+              hoverOffset: 8,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '62%',
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: { boxWidth: 12, padding: 14, usePointStyle: true },
+              },
             },
           },
-        },
-      }));
-    }
+        }));
+      }
 
-    // Bar — bozorlar
-    const mEl = document.getElementById('chart-markets');
-    if (mEl) {
-      reportCharts.push(new Chart(mEl, {
-        type: 'bar',
-        data: {
-          labels: byMarket.map((m) => m.name),
-          datasets: [
-            {
-              label: t('chart_shops'),
-              data: byMarket.map((m) => Number(m.shops || 0)),
-              backgroundColor: 'rgba(56, 189, 248, 0.75)',
+      // Bar — bozorlar
+      const mEl = document.getElementById('chart-markets');
+      if (mEl && byMarket.length) {
+        reportCharts.push(new Chart(mEl, {
+          type: 'bar',
+          data: {
+            labels: byMarket.map((m) => m.name || '—'),
+            datasets: [
+              {
+                label: t('chart_shops'),
+                data: byMarket.map((m) => Number(m.shops || 0)),
+                backgroundColor: 'rgba(56, 189, 248, 0.75)',
+                borderRadius: 8,
+                borderSkipped: false,
+              },
+              {
+                label: t('chart_products'),
+                data: byMarket.map((m) => Number(m.products || 0)),
+                backgroundColor: 'rgba(34, 197, 94, 0.75)',
+                borderRadius: 8,
+                borderSkipped: false,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+              x: {
+                grid: { display: false },
+                ticks: { maxRotation: 40, minRotation: 0 },
+              },
+              y: {
+                beginAtZero: true,
+                grid: { color: gridColor },
+                ticks: { precision: 0 },
+              },
+            },
+            plugins: {
+              legend: {
+                position: 'top',
+                align: 'end',
+                labels: { boxWidth: 12, usePointStyle: true, padding: 16 },
+              },
+            },
+          },
+        }));
+      }
+
+      // Horizontal bar — top shops views
+      const tEl = document.getElementById('chart-top-shops');
+      if (tEl && topShops.length) {
+        const top = [...topShops].slice(0, 8).reverse();
+        const greens = top.map((_, i) => {
+          const n = Math.max(1, top.length - 1);
+          const a = 0.45 + (i / n) * 0.45;
+          return `rgba(34, 197, 94, ${a})`;
+        });
+        reportCharts.push(new Chart(tEl, {
+          type: 'bar',
+          data: {
+            labels: top.map((x) => x.name || '—'),
+            datasets: [{
+              label: t('chart_views'),
+              data: top.map((x) => Number(x.views_count || 0)),
+              backgroundColor: greens,
               borderRadius: 8,
               borderSkipped: false,
+            }],
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: {
+                beginAtZero: true,
+                grid: { color: gridColor },
+                ticks: { precision: 0 },
+              },
+              y: {
+                grid: { display: false },
+              },
             },
-            {
-              label: t('chart_products'),
-              data: byMarket.map((m) => Number(m.products || 0)),
-              backgroundColor: 'rgba(34, 197, 94, 0.75)',
-              borderRadius: 8,
-              borderSkipped: false,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          interaction: { mode: 'index', intersect: false },
-          scales: {
-            x: {
-              grid: { display: false },
-              ticks: { maxRotation: 40, minRotation: 0 },
-            },
-            y: {
-              beginAtZero: true,
-              grid: { color: gridColor },
-              ticks: { precision: 0 },
+            plugins: {
+              legend: { display: false },
             },
           },
-          plugins: {
-            legend: {
-              position: 'top',
-              align: 'end',
-              labels: { boxWidth: 12, usePointStyle: true, padding: 16 },
-            },
-          },
-        },
-      }));
-    }
-
-    // Horizontal bar — top shops views
-    const tEl = document.getElementById('chart-top-shops');
-    if (tEl) {
-      const top = [...topShops].slice(0, 8).reverse();
-      reportCharts.push(new Chart(tEl, {
-        type: 'bar',
-        data: {
-          labels: top.map((x) => x.name),
-          datasets: [{
-            label: t('chart_views'),
-            data: top.map((x) => Number(x.views_count || 0)),
-            backgroundColor: (ctx) => {
-              const i = ctx.dataIndex;
-              const n = top.length || 1;
-              const a = 0.45 + (i / Math.max(1, n - 1)) * 0.45;
-              return `rgba(34, 197, 94, ${a})`;
-            },
-            borderRadius: 8,
-            borderSkipped: false,
-          }],
-        },
-        options: {
-          indexAxis: 'y',
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: {
-            x: {
-              beginAtZero: true,
-              grid: { color: gridColor },
-              ticks: { precision: 0 },
-            },
-            y: {
-              grid: { display: false },
-            },
-          },
-          plugins: {
-            legend: { display: false },
-          },
-        },
-      }));
+        }));
+      }
+    } catch (chartErr) {
+      console.error('[report charts]', chartErr);
     }
   }
 
